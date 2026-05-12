@@ -1,0 +1,68 @@
+{
+  "name": "agri-ledger",
+  "version": "1.1.1",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.js",
+  "description": "Desktop sales and inventory starter app for a dairy and agri-supply business.",
+  "scripts": {
+    "dev": "node scripts/dev.js",
+    "dev:renderer": "vite",
+    "db:init": "electron scripts/init-db.js",
+    "build:renderer": "vite build",
+    "build": "vite build && electron-builder",
+    "start": "electron ."
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.9.0",
+    "exceljs": "^4.4.0",
+    "papaparse": "^5.5.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.8",
+    "png-to-ico": "^3.0.1",
+    "rcedit": "^5.0.2",
+    "vite": "^6.0.0"
+  },
+  "build": {
+    "appId": "com.agriledger.desktop",
+    "productName": "AgriLedger",
+    "icon": "logo/icon.ico",
+    "afterPack": "./scripts/afterPack.cjs",
+    "directories": {
+      "output": "dist/packaged"
+    },
+    "files": [
+      "agridb.db",
+      "electron/**/*",
+      "src/shared/**/*",
+      "dist/renderer/**/*",
+      "logo/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.business"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "logo/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "logo/icon.ico",
+      "uninstallerIcon": "logo/icon.ico",
+      "installerHeaderIcon": "logo/icon.ico",
+      "shortcutName": "AgriLedger"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}
