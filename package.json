@@ -46,7 +46,7 @@
       "package.json"
     ],
     "mac": {
-      "icon": "logo/logo.png",
+      "icon": "logo/icon-mac.png",
       "target": "dmg",
       "category": "public.app-category.business"
     },
