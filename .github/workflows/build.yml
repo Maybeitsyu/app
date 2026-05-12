@@ -39,6 +39,9 @@ jobs:
           args: |
             --config.win.signAndEditExecutable=false
 
+      - name: List Files (Debug)
+        run: ls -R dist/packaged
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
