@@ -32,7 +32,7 @@
   "build": {
     "appId": "com.agriledger.desktop",
     "productName": "AgriLedger",
-    "icon": "logo/icon.ico",
+    "icon": "logo/logo.png",
     "afterPack": "./scripts/afterPack.cjs",
     "directories": {
       "output": "dist/packaged"
