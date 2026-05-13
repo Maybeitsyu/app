@@ -319,7 +319,8 @@ function serializeSaleItem(row) {
     costing: roundMoney(row.costing),
     totalCost: roundMoney(row.total_cost),
     profit: roundMoney(row.profit),
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    isVatExempt: (row.vat_exempt_amount ?? 0) > 0
   };
 }
 
@@ -467,7 +468,7 @@ function getFinancialStatement(db, { fromDate = '', toDate = '', companyName = '
   // 1. Sales & COGS
   const salesAgg = db.prepare(`
     SELECT 
-      COALESCE(SUM(gross_amount), 0) as total_sales,
+      COALESCE(SUM(gross_amount - output_vat), 0) as total_sales,
       COALESCE(SUM(COALESCE(gross_amount, 0) - COALESCE(profit, 0) - COALESCE(output_vat, 0)), 0) as total_cogs
     FROM sales
     ${whereClause} AND status NOT IN ('FAILED', 'Return')
@@ -477,7 +478,7 @@ function getFinancialStatement(db, { fromDate = '', toDate = '', companyName = '
   const expenseRows = db.prepare(`
     SELECT 
       expense_category as category,
-      COALESCE(SUM(gross_amount), 0) as amount
+      COALESCE(SUM(net_of_vat), 0) as amount
     FROM purchases
     ${whereClause}
     GROUP BY expense_category
