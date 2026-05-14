@@ -11,12 +11,14 @@
     "dev:renderer": "vite",
     "db:init": "electron scripts/init-db.js",
     "build:renderer": "vite build",
-    "build": "vite build && electron-builder",
+    "build": "node scripts/make-icon.mjs && vite build && electron-builder",
     "start": "electron ."
   },
   "dependencies": {
     "better-sqlite3": "^12.9.0",
+    "cors": "^2.8.6",
     "exceljs": "^4.4.0",
+    "express": "^5.2.1",
     "papaparse": "^5.5.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
@@ -52,8 +54,7 @@
     },
     "win": {
       "target": "nsis",
-      "icon": "logo/icon.ico",
-      "signAndEditExecutable": false
+      "icon": "logo/icon.ico"
     },
     "nsis": {
       "oneClick": false,

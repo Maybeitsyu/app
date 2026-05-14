@@ -37,6 +37,12 @@ contextBridge.exposeInMainWorld('agriLedger', {
     delete: (id) => invoke('customers:delete', id),
     bulkDelete: (ids) => invoke('customers:bulkDelete', ids)
   },
+  suppliers: {
+    list: (filters) => invoke('suppliers:list', filters),
+    save: (payload) => invoke('suppliers:save', payload),
+    delete: (id) => invoke('suppliers:delete', id),
+    bulkDelete: (ids) => invoke('suppliers:bulkDelete', ids)
+  },
   sales: {
     list: (filters) => invoke('sales:list', filters),
     save: (payload) => invoke('sales:save', payload),
@@ -58,6 +64,10 @@ contextBridge.exposeInMainWorld('agriLedger', {
     openDialog: (options) => invoke('app:openFileDialog', options),
     write: (options) => invoke('app:writeFile', options),
     read: (options) => invoke('app:readFile', options)
+  },
+  sync: {
+    getServerInfo: () => ipcRenderer.invoke('sync:getServerInfo'),
+    toggleServer: (enabled) => ipcRenderer.invoke('sync:toggleServer', enabled)
   },
   data: {
     exportSalesExcel: (options) => invoke('sales:exportExcel', options),

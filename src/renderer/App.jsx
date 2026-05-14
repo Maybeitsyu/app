@@ -359,9 +359,169 @@ function PurchaseItemRow({ item, index, products, onUpdate, onRemove, onUploadPh
     );
 }
 
-function CustomerSearchSelect({ customers, value, onChange, placeholder = "Choose a customer" }) {
+function SupplierSearchSelect({ suppliers, value, onChange, onCreateNew, placeholder = "Type or choose a supplier" }) {
+    const [isOpen, setIsOpen] = useState(false);
+    const [search, setSearch] = useState(value || '');
+    const [creating, setCreating] = useState(false);
+    const wrapperRef = useRef(null);
+    const inputRef = useRef(null);
+
+    const selectedSupplier = suppliers.find(s => s.name === value);
+
+    const filtered = useMemo(() => {
+        const q = search.toLowerCase();
+        return suppliers.filter(s =>
+            s.name.toLowerCase().includes(q) ||
+            (s.contactNumber && s.contactNumber.toLowerCase().includes(q)) ||
+            (s.tin && s.tin.toLowerCase().includes(q))
+        ).slice(0, 50);
+    }, [suppliers, search]);
+
+    const searchTrimmed = search.trim();
+    // Allow quick add if name doesn't exist yet
+    const canQuickAdd = onCreateNew && searchTrimmed.length > 0 && !suppliers.some(
+        s => s.name.toLowerCase() === searchTrimmed.toLowerCase()
+    );
+
+    useEffect(() => {
+        setSearch(value || '');
+    }, [value]);
+
+    useEffect(() => {
+        function handleClickOutside(event) {
+            if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
+                setIsOpen(false);
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const handleToggle = () => {
+        const next = !isOpen;
+        setIsOpen(next);
+        if (next) {
+            setSearch(value || '');
+            setTimeout(() => inputRef.current?.focus(), 50);
+        }
+    };
+
+    const handleSelect = (supplier) => {
+        if (supplier) {
+            onChange(supplier.name, supplier.tin || '', supplier.address || '');
+        } else {
+            // If they just typed a name and didn't select, we treat it as a custom name
+            onChange(searchTrimmed, '', '');
+        }
+        setIsOpen(false);
+    };
+
+    const handleQuickAdd = async () => {
+        if (!searchTrimmed || creating) return;
+        setCreating(true);
+        try {
+            await onCreateNew(searchTrimmed);
+            setIsOpen(false);
+        } catch (err) {
+            console.error('Failed to trigger supplier creation modal:', err);
+        } finally {
+            setCreating(false);
+        }
+    };
+
+    return (
+        <div className="search-select-wrapper" ref={wrapperRef}>
+            <div className="search-select-trigger" onClick={handleToggle}>
+                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {value || placeholder}
+                </span>
+                <span style={{ fontSize: '0.7rem', opacity: 0.5, marginLeft: 8 }}>▼</span>
+            </div>
+
+            {isOpen && (
+                <div className="search-select-dropdown">
+                    <div className="search-select-search">
+                        <input
+                            ref={inputRef}
+                            type="text"
+                            className="search-select-input"
+                            placeholder="Search or type new name..."
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Escape') setIsOpen(false);
+                                if (e.key === 'Enter') {
+                                    if (canQuickAdd) handleQuickAdd();
+                                    else if (filtered.length > 0) handleSelect(filtered[0]);
+                                    else handleSelect(null);
+                                }
+                            }}
+                            onBlur={() => {
+                                // If they click away, we don't automatically select unless they explicitly clicked or hit enter
+                            }}
+                        />
+                    </div>
+                    <div className="search-select-list">
+                        {filtered.length > 0 ? (
+                            filtered.map(supplier => (
+                                <div
+                                    key={supplier.id}
+                                    className={`search-select-item ${supplier.name === value ? 'selected' : ''}`}
+                                    onClick={() => handleSelect(supplier)}
+                                >
+                                    <div className="search-item-info">
+                                        <span className="search-item-name">{supplier.name}</span>
+                                        <span className="search-item-code">{supplier.contactNumber || 'No contact'}</span>
+                                    </div>
+                                    <div className="search-item-meta" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', textAlign: 'right' }}>
+                                        <span className="search-item-price">{supplier.tin ? `TIN: ${supplier.tin}` : ''}</span>
+                                        {supplier.address && (
+                                            <span className="search-item-address" style={{ fontSize: '0.7rem', opacity: 0.7, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                {supplier.address}
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            ))
+                        ) : (
+                            searchTrimmed !== '' && !canQuickAdd && <div className="search-select-empty">No suppliers found.</div>
+                        )}
+                        {canQuickAdd && (
+                            <div
+                                className="search-select-item"
+                                style={{
+                                    borderTop: filtered.length > 0 ? '1px solid var(--border)' : 'none',
+                                    color: 'var(--primary)',
+                                    fontWeight: 600,
+                                    gap: '8px',
+                                    opacity: creating ? 0.6 : 1,
+                                    cursor: creating ? 'not-allowed' : 'pointer'
+                                }}
+                                onClick={handleQuickAdd}
+                            >
+                                <span style={{ fontSize: '1.1em' }}>＋</span>
+                                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                    <span>{creating ? 'Saving...' : `Add "${searchTrimmed}" to Suppliers`}</span>
+                                    <small style={{ fontWeight: 400, opacity: 0.8, fontSize: '0.75rem' }}>Full profile will be auto-saved on submit</small>
+                                </div>
+                            </div>
+                        )}
+                        {searchTrimmed !== '' && !canQuickAdd && !filtered.some(s => s.name === searchTrimmed) && (
+                           <div className="search-select-item" onClick={() => handleSelect(null)}>
+                               <span>Use custom name: <strong>"{searchTrimmed}"</strong></span>
+                           </div>
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function CustomerSearchSelect({ customers, value, onChange, onCreateNew, placeholder = "Choose a customer" }) {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState('');
+    const [creating, setCreating] = useState(false);
     const wrapperRef = useRef(null);
     const inputRef = useRef(null);
 
@@ -375,6 +535,12 @@ function CustomerSearchSelect({ customers, value, onChange, placeholder = "Choos
             (c.tin && c.tin.toLowerCase().includes(q))
         ).slice(0, 50);
     }, [customers, search]);
+
+    // Show quick-add option when search text doesn't exactly match any existing customer name
+    const searchTrimmed = search.trim();
+    const canQuickAdd = onCreateNew && searchTrimmed.length > 0 && !customers.some(
+        c => c.name.toLowerCase() === searchTrimmed.toLowerCase()
+    );
 
     useEffect(() => {
         function handleClickOutside(event) {
@@ -400,6 +566,19 @@ function CustomerSearchSelect({ customers, value, onChange, placeholder = "Choos
         setIsOpen(false);
     };
 
+    const handleQuickAdd = async () => {
+        if (!searchTrimmed || creating) return;
+        setCreating(true);
+        try {
+            await onCreateNew(searchTrimmed);
+            setIsOpen(false);
+        } catch (err) {
+            console.error('Failed to trigger customer creation modal:', err);
+        } finally {
+            setCreating(false);
+        }
+    };
+
     return (
         <div className="search-select-wrapper" ref={wrapperRef}>
             <div className="search-select-trigger" onClick={handleToggle}>
@@ -421,6 +600,7 @@ function CustomerSearchSelect({ customers, value, onChange, placeholder = "Choos
                             onChange={(e) => setSearch(e.target.value)}
                             onKeyDown={(e) => {
                                 if (e.key === 'Escape') setIsOpen(false);
+                                if (e.key === 'Enter' && canQuickAdd) handleQuickAdd();
                             }}
                         />
                     </div>
@@ -450,7 +630,24 @@ function CustomerSearchSelect({ customers, value, onChange, placeholder = "Choos
                                 </div>
                             ))
                         ) : (
-                            search.trim() !== '' && <div className="search-select-empty">No customers found.</div>
+                            searchTrimmed !== '' && !canQuickAdd && <div className="search-select-empty">No customers found.</div>
+                        )}
+                        {canQuickAdd && (
+                            <div
+                                className="search-select-item"
+                                style={{
+                                    borderTop: filtered.length > 0 ? '1px solid var(--border)' : 'none',
+                                    color: 'var(--primary)',
+                                    fontWeight: 600,
+                                    gap: '8px',
+                                    opacity: creating ? 0.6 : 1,
+                                    cursor: creating ? 'not-allowed' : 'pointer'
+                                }}
+                                onClick={handleQuickAdd}
+                            >
+                                <span style={{ fontSize: '1.1em' }}>＋</span>
+                                <span>{creating ? 'Saving...' : `Add "${searchTrimmed}" as new customer`}</span>
+                            </div>
                         )}
                     </div>
                 </div>
@@ -494,6 +691,19 @@ function blankCustomerForm() {
     };
 }
 
+function blankSupplierForm() {
+    return {
+        id: '',
+        name: '',
+        address: '',
+        contact_number: '',
+        tin: '',
+        email: '',
+        category: '',
+        notes: ''
+    };
+}
+
 function blankPurchaseForm() {
     return {
         id: '',
@@ -503,6 +713,8 @@ function blankPurchaseForm() {
         supplier_name: '',
         receipt_number: '',
         address: '',
+        supplier_contact: '',
+        supplier_category: '',
         gross_amount: '0',
         is_vat_exempt: false,
         expense_category: 'Materials & Supplies',
@@ -734,6 +946,19 @@ function customerToForm(customer) {
     };
 }
 
+function supplierToForm(supplier) {
+    return {
+        id: supplier.id,
+        name: supplier.name ?? '',
+        address: supplier.address ?? '',
+        contact_number: supplier.contactNumber ?? '',
+        tin: supplier.tin ?? '',
+        email: supplier.email ?? '',
+        category: supplier.category ?? '',
+        notes: supplier.notes ?? ''
+    };
+}
+
 function purchaseToForm(purchase) {
     return {
         id: purchase.id,
@@ -926,8 +1151,8 @@ function Toast({ id, text, tone = 'info', onRemove, onClick }) {
     }, [id, onRemove]);
 
     return (
-        <div 
-            className={`toast-item tone-${tone}`} 
+        <div
+            className={`toast-item tone-${tone}`}
             onClick={() => {
                 if (onClick) onClick();
                 onRemove(id);
@@ -2099,92 +2324,6 @@ function CustomersTab({
 
     return (
         <div className="stack">
-            {/* ── Modal overlay for add / edit ── */}
-            {showForm ? (
-                <div className="modal-backdrop">
-                    <div className="modal-box">
-                        <div className="modal-header">
-                            <h3 className="modal-title">{form.id ? 'Edit customer' : 'Add customer'}</h3>
-                            <button className="modal-close" type="button" onClick={onCancel} aria-label="Close">✕</button>
-                        </div>
-
-                        <form className="form-stack" onSubmit={onSubmit}>
-                            <div className="field-grid">
-                                <label className="field">
-                                    <span>Name <span style={{ color: 'var(--danger)' }}>*</span></span>
-                                    <input
-                                        ref={customerNameInputRef}
-                                        className="input"
-                                        placeholder="Full name"
-                                        maxLength={100}
-                                        value={form.name}
-                                        onChange={(event) => setForm({ ...form, name: event.target.value })}
-                                    />
-                                </label>
-                                <label className="field">
-                                    <span>Contact number (optional)</span>
-                                    <input
-                                        className="input"
-                                        placeholder="Mobile or landline"
-                                        maxLength={20}
-                                        value={form.contact_number}
-                                        onChange={(event) => setForm({ ...form, contact_number: event.target.value })}
-                                    />
-                                </label>
-                                <label className="field span-2">
-                                    <span>Address 1 (optional)</span>
-                                    <textarea
-                                        className="textarea"
-                                        rows="2"
-                                        placeholder="Complete delivery address"
-                                        maxLength={500}
-                                        value={form.address}
-                                        onChange={(event) => setForm({ ...form, address: event.target.value })}
-                                    />
-                                </label>
-                                <label className="field span-2">
-                                    <span>Address 2 (optional)</span>
-                                    <textarea
-                                        className="textarea"
-                                        rows="2"
-                                        placeholder="Additional address info (e.g. Landmark, Floor, Suite)"
-                                        maxLength={500}
-                                        value={form.address_2}
-                                        onChange={(event) => setForm({ ...form, address_2: event.target.value })}
-                                    />
-                                </label>
-                                <label className="field">
-                                    <span>Customer username (optional)</span>
-                                    <input
-                                        className="input"
-                                        placeholder="Shopee / FB name"
-                                        value={form.customer_username}
-                                        onChange={(event) => setForm({ ...form, customer_username: event.target.value })}
-                                    />
-                                </label>
-                                <label className="field">
-                                    <span>TIN (optional)</span>
-                                    <input
-                                        className="input"
-                                        placeholder="Taxpayer ID"
-                                        value={form.tin}
-                                        onChange={(event) => setForm({ ...form, tin: event.target.value })}
-                                    />
-                                </label>
-                            </div>
-
-                            <div className="form-actions">
-                                <button className="button primary" type="submit">
-                                    {form.id ? 'Update customer' : 'Save customer'}
-                                </button>
-                                <button className="button secondary" type="button" onClick={onCancel}>
-                                    Cancel
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            ) : null}
 
             <div className="filter-bar">
                 <div className="stack-h" style={{ gap: '8px' }}>
@@ -2345,6 +2484,240 @@ function CustomersTab({
     );
 }
 
+function SuppliersTab({
+    suppliers,
+    search,
+    setSearch,
+    showForm,
+    form,
+    setForm,
+    onSubmit,
+    onCreateNew,
+    onEdit,
+    onDelete,
+    onBulkDelete,
+    onCancel
+}) {
+    const supplierNameInputRef = useRef(null);
+    const [activeSupplierId, setActiveSupplierId] = useState(null);
+    const [selectedIds, setSelectedIds] = useState([]);
+    const [sortConfig, setSortConfig] = useState({ key: 'name', direction: 'asc' });
+
+    const [currentPage, setCurrentPage] = useState(1);
+    const [pageSize, setPageSize] = useState(50);
+
+    function handleSort(key) {
+        let direction = 'asc';
+        if (sortConfig.key === key && sortConfig.direction === 'asc') {
+            direction = 'desc';
+        }
+        setSortConfig({ key, direction });
+    }
+
+    useEffect(() => {
+        if (supplierNameInputRef.current) {
+            requestAnimationFrame(() => {
+                supplierNameInputRef.current?.focus();
+            });
+        }
+    }, [form.id]);
+
+    useEffect(() => {
+        function handleClickOutside(event) {
+            if (activeSupplierId && !event.target.closest('.table tr')) {
+                setActiveSupplierId(null);
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [activeSupplierId]);
+
+    const filteredSuppliers = useMemo(() => {
+        return suppliers.filter((s) => {
+            const query = search.trim().toLowerCase();
+            if (!query) return true;
+            return [s.name, s.address, s.contactNumber, s.tin, s.email, s.category, s.notes]
+                .join(' ')
+                .toLowerCase()
+                .includes(query);
+        });
+    }, [suppliers, search]);
+
+    const sortedSuppliers = useMemo(() => {
+        return [...filteredSuppliers].sort((a, b) => {
+            let aValue = (a[sortConfig.key] || '').toString().toLowerCase();
+            let bValue = (b[sortConfig.key] || '').toString().toLowerCase();
+            if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
+            if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
+            return 0;
+        });
+    }, [filteredSuppliers, sortConfig]);
+
+    const paginatedSuppliers = useMemo(() => {
+        const start = (currentPage - 1) * pageSize;
+        return sortedSuppliers.slice(start, start + pageSize);
+    }, [sortedSuppliers, currentPage, pageSize]);
+
+    useEffect(() => { setCurrentPage(1); }, [search, pageSize]);
+
+    return (
+        <div className="stack">
+
+            <div className="filter-bar">
+                <div className="stack-h" style={{ gap: '8px' }}>
+                    <select
+                        className="select select-compact"
+                        style={{ width: 'auto', minWidth: '130px' }}
+                        value={sortConfig.key}
+                        onChange={(e) => setSortConfig({ ...sortConfig, key: e.target.value })}
+                    >
+                        <option value="name">Sort by Name</option>
+                        <option value="category">Sort by Category</option>
+                        <option value="contactNumber">Sort by Contact</option>
+                        <option value="tin">Sort by TIN</option>
+                    </select>
+                    <button
+                        className="button secondary icon-button-compact"
+                        type="button"
+                        onClick={() => setSortConfig({ ...sortConfig, direction: sortConfig.direction === 'asc' ? 'desc' : 'asc' })}
+                        title={sortConfig.direction === 'asc' ? 'Ascending' : 'Descending'}
+                    >
+                        {sortConfig.direction === 'asc' ? '↑' : '↓'}
+                    </button>
+                </div>
+
+                <button className="button primary" type="button" onClick={onCreateNew}>
+                    Add supplier
+                </button>
+                <input
+                    className="input input-compact"
+                    placeholder="Search suppliers..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                />
+            </div>
+
+            <Panel
+                title="Supplier directory"
+                subtitle={`${filteredSuppliers.length} of ${suppliers.length} suppliers shown`}
+                actions={
+                    selectedIds.length > 0 && (
+                        <button
+                            className="button danger"
+                            type="button"
+                            onClick={() => {
+                                onBulkDelete(selectedIds);
+                                setSelectedIds([]);
+                            }}
+                        >
+                            Delete Selected ({selectedIds.length})
+                        </button>
+                    )
+                }
+            >
+                {filteredSuppliers.length === 0 ? (
+                    <EmptyState title="No suppliers found" description="Try another search term or add the first supplier profile." />
+                ) : (
+                    <div className="table-wrap">
+                        <table className="table">
+                            <thead>
+                                <tr>
+                                    <th className="table-checkbox-cell">
+                                        <input
+                                            type="checkbox"
+                                            className="table-checkbox"
+                                            checked={selectedIds.length === filteredSuppliers.length && filteredSuppliers.length > 0}
+                                            onChange={(e) => {
+                                                if (e.target.checked) {
+                                                    setSelectedIds(filteredSuppliers.map((s) => s.id));
+                                                } else {
+                                                    setSelectedIds([]);
+                                                }
+                                            }}
+                                        />
+                                    </th>
+                                    <th onClick={() => handleSort('name')} className="sortable-header">
+                                        <div className="header-sort-content">Name {sortConfig.key === 'name' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</div>
+                                    </th>
+                                    <th onClick={() => handleSort('address')} className="sortable-header">
+                                        <div className="header-sort-content">Address {sortConfig.key === 'address' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</div>
+                                    </th>
+                                    <th onClick={() => handleSort('category')} className="sortable-header">
+                                        <div className="header-sort-content">Category {sortConfig.key === 'category' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</div>
+                                    </th>
+                                    <th onClick={() => handleSort('contactNumber')} className="sortable-header">
+                                        <div className="header-sort-content">Contact {sortConfig.key === 'contactNumber' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</div>
+                                    </th>
+                                    <th onClick={() => handleSort('tin')} className="sortable-header">
+                                        <div className="header-sort-content">TIN {sortConfig.key === 'tin' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</div>
+                                    </th>
+                                    <th onClick={() => handleSort('email')} className="sortable-header">
+                                        <div className="header-sort-content">Email {sortConfig.key === 'email' && (sortConfig.direction === 'asc' ? '↑' : '↓')}</div>
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {paginatedSuppliers.map((supplier) => (
+                                    <tr
+                                        key={supplier.id}
+                                        className={`${selectedIds.includes(supplier.id) ? 'selected-row' : ''} ${activeSupplierId === supplier.id ? 'active' : ''}`}
+                                        onClick={() => {
+                                            if (window.getSelection().toString()) return;
+                                            setActiveSupplierId(supplier.id === activeSupplierId ? null : supplier.id);
+                                        }}
+                                        style={{ position: 'relative' }}
+                                    >
+                                        <td className="table-checkbox-cell" onClick={(e) => e.stopPropagation()}>
+                                            <input
+                                                type="checkbox"
+                                                className="table-checkbox"
+                                                checked={selectedIds.includes(supplier.id)}
+                                                onChange={(e) => {
+                                                    if (e.target.checked) {
+                                                        setSelectedIds([...selectedIds, supplier.id]);
+                                                    } else {
+                                                        setSelectedIds(selectedIds.filter((id) => id !== supplier.id));
+                                                    }
+                                                }}
+                                            />
+                                        </td>
+                                        <td>
+                                            <strong>{supplier.name}</strong>
+                                        </td>
+                                        <td>{supplier.address || '-'}</td>
+                                        <td>{supplier.category || '-'}</td>
+                                        <td>{supplier.contactNumber || '-'}</td>
+                                        <td>{supplier.tin || '-'}</td>
+                                        <td>{supplier.email || '-'}</td>
+
+                                        {activeSupplierId === supplier.id && (
+                                            <td className="row-overlay-cell" onClick={(e) => e.stopPropagation()}>
+                                                <div className="row-overlay" onClick={() => setActiveSupplierId(null)}>
+                                                    <div className="product-card-overlay-actions" style={{ flexDirection: 'row', maxWidth: 'none' }} onClick={(e) => e.stopPropagation()}>
+                                                        <button className="btn-card-edit" type="button" onClick={(e) => { e.stopPropagation(); onEdit(supplier); setActiveSupplierId(null); }}>Edit</button>
+                                                        <button className="btn-card-delete" type="button" onClick={(e) => { e.stopPropagation(); onDelete(supplier.id); setActiveSupplierId(null); }}>Delete</button>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                        )}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+                <Pagination
+                    currentPage={currentPage}
+                    totalItems={filteredSuppliers.length}
+                    pageSize={pageSize}
+                    onPageChange={setCurrentPage}
+                    onPageSizeChange={setPageSize}
+                />
+            </Panel>
+        </div>
+    );
+}
+
 function SalesTab({
     sales,
     products,
@@ -2364,7 +2737,8 @@ function SalesTab({
     onViewReceipt,
     onExport,
     onImport,
-    onUpdateStatus
+    onUpdateStatus,
+    onCreateCustomer
 }) {
     const [selectedIds, setSelectedIds] = useState([]);
     const [activeSaleId, setActiveSaleId] = useState(null);
@@ -2586,6 +2960,7 @@ function SalesTab({
                                             customers={customers}
                                             value={form.customer_id}
                                             onChange={(val) => setForm({ ...form, customer_id: val })}
+                                            onCreateNew={onCreateCustomer}
                                         />
                                     </label>
                                     <label className="field">
@@ -2787,7 +3162,6 @@ function SalesTab({
                                                             step="0.01"
                                                             value={item.unit_price !== '' && item.unit_price !== undefined ? item.unit_price : (roundMoney(preview.lines[index]?.unitPrice) ?? '')}
                                                             onChange={(event) => updateLine(index, { unit_price: event.target.value, gross_override: null })}
-                                                            onBlur={() => updateLine(index, { unit_price: '' })}
                                                         />
                                                     </label>
                                                     <label className="field" style={{ gridColumn: 'span 3' }}>
@@ -2798,7 +3172,6 @@ function SalesTab({
                                                             step="0.01"
                                                             value={item.unit_cost !== '' && item.unit_cost !== undefined ? item.unit_cost : (roundMoney(preview.lines[index]?.costing) ?? '')}
                                                             onChange={(event) => updateLine(index, { unit_cost: event.target.value })}
-                                                            onBlur={() => updateLine(index, { unit_cost: '' })}
                                                         />
                                                     </label>
                                                     <label className="field" style={{ gridColumn: 'span 3' }}>
@@ -2814,9 +3187,6 @@ function SalesTab({
                                                                     total_price: val,
                                                                     gross_override: val !== '' ? parseFloat(val) : null
                                                                 });
-                                                            }}
-                                                            onBlur={() => {
-                                                                updateLine(index, { total_price: '' });
                                                             }}
                                                         />
                                                     </label>
@@ -3340,6 +3710,7 @@ function SalesTab({
 function PurchasesTab({
     purchases,
     products,
+    suppliers,
     taxSettings,
     filters,
     setFilters,
@@ -3354,7 +3725,8 @@ function PurchasesTab({
     onCancel,
     onExport,
     onImport,
-    onUploadItemPhoto
+    onUploadItemPhoto,
+    onCreateSupplier
 }) {
     const [selectedIds, setSelectedIds] = useState([]);
     const [activePurchaseId, setActivePurchaseId] = useState(null);
@@ -3543,7 +3915,17 @@ function PurchasesTab({
                                         </label>
                                         <label className="field">
                                             <span>SUPPLIER <span style={{ color: 'var(--danger)' }}>*</span></span>
-                                            <input className="input input-compact" placeholder="Company or Individual" value={form.supplier_name} onChange={(e) => setForm({ ...form, supplier_name: e.target.value })} />
+                                            <SupplierSearchSelect
+                                                suppliers={suppliers}
+                                                value={form.supplier_name}
+                                                onChange={(name, tin, addr) => {
+                                                    const updates = { supplier_name: name };
+                                                    if (tin) updates.supplier_tin = tin;
+                                                    if (addr) updates.address = addr;
+                                                    setForm({ ...form, ...updates });
+                                                }}
+                                                onCreateNew={onCreateSupplier}
+                                            />
                                         </label>
                                         <label className="field">
                                             <span>RECEIPT # <span style={{ color: 'var(--danger)' }}>*</span></span>
@@ -3560,8 +3942,16 @@ function PurchasesTab({
                                             </select>
                                         </label>
                                         <label className="field">
-                                            <span>Address (optional)</span>
+                                            <span>Address</span>
                                             <input className="input input-compact" placeholder="Supplier address..." value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+                                        </label>
+                                        <label className="field">
+                                            <span>Contact #</span>
+                                            <input className="input input-compact" placeholder="Phone or mobile..." value={form.supplier_contact} onChange={(e) => setForm({ ...form, supplier_contact: e.target.value })} />
+                                        </label>
+                                        <label className="field">
+                                            <span>Supplier Category</span>
+                                            <input className="input input-compact" placeholder="e.g. Feed Mill, Vet Clinic" value={form.supplier_category} onChange={(e) => setForm({ ...form, supplier_category: e.target.value })} />
                                         </label>
                                         <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: '4px' }}>
                                             <label className="field checkbox-field compact" style={{ margin: 0 }}>
@@ -3658,7 +4048,17 @@ function PurchasesTab({
                                         </label>
                                         <label className="field">
                                             <span>SUPPLIER <span style={{ color: 'var(--danger)' }}>*</span></span>
-                                            <input className="input" placeholder="Company or Individual" value={form.supplier_name} onChange={(e) => setForm({ ...form, supplier_name: e.target.value })} />
+                                            <SupplierSearchSelect
+                                                suppliers={suppliers}
+                                                value={form.supplier_name}
+                                                onChange={(name, tin, addr) => {
+                                                    const updates = { supplier_name: name };
+                                                    if (tin) updates.supplier_tin = tin;
+                                                    if (addr) updates.address = addr;
+                                                    setForm({ ...form, ...updates });
+                                                }}
+                                                onCreateNew={onCreateSupplier}
+                                            />
                                         </label>
                                         <label className="field">
                                             <span>RECEIPT # <span style={{ color: 'var(--danger)' }}>*</span></span>
@@ -4250,7 +4650,7 @@ function ReceiptModal({ sale, onClose }) {
 
 
     return (
-        <div className="modal-backdrop">
+        <div className="modal-backdrop" style={{ zIndex: 9999 }}>
             <div className="modal-box receipt-box">
                 <div className="receipt-header">
                     <h2 className="receipt-company">{sale.companyName}</h2>
@@ -4335,7 +4735,7 @@ function ConfirmDialog({
     if (!isOpen) return null;
 
     return (
-        <div className="confirm-overlay">
+        <div className="confirm-overlay" style={{ zIndex: 9999 }}>
             <div className="confirm-dialog">
                 <h3>{title}</h3>
                 <p>{message}</p>
@@ -4402,7 +4802,7 @@ function RestockProductDialog({ product, isOpen, onConfirm, onCancel }) {
     }
 
     return (
-        <div className="confirm-overlay">
+        <div className="confirm-overlay" style={{ zIndex: 9999 }}>
             <div className="confirm-dialog" style={{ minWidth: '400px' }}>
                 <h3>Restock {product.name}</h3>
                 <p style={{ marginBottom: '12px', color: '#666', fontSize: '0.9rem' }}>
@@ -4604,8 +5004,12 @@ function SplitProductDialog({ product, isOpen, onConfirm, onCancel }) {
     );
 }
 
+
+
 export default function App() {
     const api = typeof window !== 'undefined' ? window.agriLedger : null;
+
+
     const [meta, setMeta] = useState(null);
     const [lookups, setLookups] = useState({
         companyNames,
@@ -4618,6 +5022,7 @@ export default function App() {
     const [dashboard, setDashboard] = useState(null);
     const [products, setProducts] = useState([]);
     const [customers, setCustomers] = useState([]);
+    const [suppliers, setSuppliers] = useState([]);
     const [sales, setSales] = useState([]);
     const [purchases, setPurchases] = useState([]);
     const [activeTab, setActiveTab] = useState('dashboard');
@@ -4647,8 +5052,12 @@ export default function App() {
 
     const [productSearch, setProductSearch] = useState('');
     const [customerSearch, setCustomerSearch] = useState('');
+    const [supplierSearch, setSupplierSearch] = useState('');
     const [showProductForm, setShowProductForm] = useState(false);
     const [showCustomerForm, setShowCustomerForm] = useState(false);
+    const [showSupplierForm, setShowSupplierForm] = useState(false);
+    const [pendingSupplierAction, setPendingSupplierAction] = useState(null);
+    const [pendingCustomerAction, setPendingCustomerAction] = useState(null);
     const [showSaleForm, setShowSaleForm] = useState(false);
     const [showPurchaseForm, setShowPurchaseForm] = useState(false);
     const [saleFilters, setSaleFilters] = useState({
@@ -4672,15 +5081,21 @@ export default function App() {
     });
     const [productForm, setProductForm] = useState(blankProductForm());
     const [customerForm, setCustomerForm] = useState(blankCustomerForm());
+    const [supplierForm, setSupplierForm] = useState(blankSupplierForm());
     const [saleForm, setSaleForm] = useState(blankSaleForm());
     const [purchaseForm, setPurchaseForm] = useState(blankPurchaseForm());
     const [loaded, setLoaded] = useState({
         dashboard: false,
         products: false,
         customers: false,
+        suppliers: false,
         sales: false,
         purchases: false
     });
+
+
+
+
 
     const flash = useCallback((text, tone = 'success', options = {}) => {
         const id = createLocalId('toast');
@@ -4734,12 +5149,13 @@ export default function App() {
 
         setLoading(true);
         try {
-            const [dashboardData, productData, customerData, salesData, purchaseData] = await Promise.all([
+            const [dashboardData, productData, customerData, salesData, purchaseData, supplierData] = await Promise.all([
                 api.dashboard.getOverview(dashboardFilters),
                 api.products.list(),
                 api.customers.list(),
                 api.sales.list(),
-                api.purchases.list()
+                api.purchases.list(),
+                api.suppliers?.list ? api.suppliers.list() : Promise.resolve([])
             ]);
 
             setDashboard(dashboardData);
@@ -4747,7 +5163,8 @@ export default function App() {
             setCustomers(customerData);
             setSales(salesData);
             setPurchases(purchaseData);
-            setLoaded({ dashboard: true, products: true, customers: true, sales: true, purchases: true });
+            setSuppliers(supplierData);
+            setLoaded({ dashboard: true, products: true, customers: true, suppliers: true, sales: true, purchases: true });
         } catch (error) {
             flash(error.message || 'Failed to load workspace.', 'error');
         } finally {
@@ -4824,6 +5241,20 @@ export default function App() {
         }
     }
 
+    async function loadSuppliersData(force = false) {
+        if (!api || (loaded.suppliers && !force)) return;
+        setLoading(true);
+        try {
+            const data = await (api.suppliers?.list ? api.suppliers.list() : Promise.resolve([]));
+            setSuppliers(data);
+            setLoaded(prev => ({ ...prev, suppliers: true }));
+        } catch (error) {
+            flash(error.message || 'Failed to load suppliers.', 'error');
+        } finally {
+            setLoading(false);
+        }
+    }
+
     async function loadPurchasesData(force = false) {
         if (!api || (loaded.purchases && !force)) return;
         setLoading(true);
@@ -4844,6 +5275,7 @@ export default function App() {
             case 'dashboard': loadDashboardData(); break;
             case 'products': loadProductsData(); break;
             case 'customers': loadCustomersData(); break;
+            case 'suppliers': loadSuppliersData(); break;
             case 'sales':
                 loadSalesData();
                 loadProductsData();
@@ -4852,6 +5284,7 @@ export default function App() {
             case 'purchases':
                 loadPurchasesData();
                 loadProductsData();
+                loadSuppliersData();
                 break;
             case 'reports':
                 // ReportsTab handles its own data loading via its own useEffect,
@@ -4865,18 +5298,22 @@ export default function App() {
             setDashboard(null);
             setProducts([]);
             setCustomers([]);
+            setSuppliers([]);
             setSales([]);
             setPurchases([]);
             setProductSearch('');
             setCustomerSearch('');
+            setSupplierSearch('');
             setShowProductForm(false);
             setShowCustomerForm(false);
+            setShowSupplierForm(false);
             setShowSaleForm(false);
             setShowPurchaseForm(false);
             setSaleFilters({ search: '', status: 'all', channel: 'all', companyName: 'all', fromDate: '', toDate: '' });
             setPurchaseFilters({ search: '', category: 'all', companyName: 'all', fromDate: '', toDate: '' });
             setProductForm(blankProductForm());
             setCustomerForm(blankCustomerForm());
+            setSupplierForm(blankSupplierForm());
             setSaleForm(blankSaleForm());
             setPurchaseForm(blankPurchaseForm());
             return;
@@ -5205,13 +5642,13 @@ export default function App() {
     }
 
     function handleStartSaleForm() {
-        setSaleForm(blankSaleForm(customers?.[0]?.id ?? ''));
+        setSaleForm(blankSaleForm());
         setShowSaleForm(true);
     }
 
     function handleCancelSaleForm() {
         setShowSaleForm(false);
-        setSaleForm(blankSaleForm(customers?.[0]?.id ?? ''));
+        setSaleForm(blankSaleForm());
     }
 
     async function handleEditSale(sale) {
@@ -5406,8 +5843,14 @@ export default function App() {
         }
 
         try {
-            await api.customers.save(customerForm);
+            const result = await api.customers.save(customerForm);
             flash(customerForm.id ? 'Customer profile updated.' : 'New customer profile saved.', 'success');
+            
+            if (pendingCustomerAction && result) {
+                pendingCustomerAction(result);
+                setPendingCustomerAction(null);
+            }
+
             setCustomerForm(blankCustomerForm());
             setShowCustomerForm(false);
             await loadWorkspace();
@@ -5471,6 +5914,91 @@ export default function App() {
         } catch (error) {
             flash(error.message || 'Failed to load receipt data.', 'error');
         }
+    }
+
+    function handleStartSupplierForm() {
+        setSupplierForm(blankSupplierForm());
+        setShowSupplierForm(true);
+    }
+
+    function handleEditSupplier(supplier) {
+        setSupplierForm(supplierToForm(supplier));
+        setShowSupplierForm(true);
+    }
+
+    function handleCancelSupplierForm() {
+        setShowSupplierForm(false);
+        setSupplierForm(blankSupplierForm());
+    }
+
+    async function handleSupplierSubmit(event) {
+        event.preventDefault();
+
+        if (!supplierForm.name?.trim()) {
+            flash('The Supplier Name is empty. Please provide a name.', 'danger');
+            return;
+        }
+
+        try {
+            const result = await api.suppliers.save(supplierForm);
+            flash(supplierForm.id ? 'Supplier profile updated.' : 'New supplier profile saved.', 'success');
+            
+            if (pendingSupplierAction && result) {
+                pendingSupplierAction(result);
+                setPendingSupplierAction(null);
+            }
+
+            setSupplierForm(blankSupplierForm());
+            setShowSupplierForm(false);
+            await loadWorkspace();
+
+            setTimeout(() => {
+                window.focus();
+                document.body.focus();
+                const firstInput = document.querySelector('input:not([type="file"]):not([type="hidden"])');
+                if (firstInput instanceof HTMLElement) firstInput.focus();
+            }, 10);
+        } catch (error) {
+            flash('We couldn\'t save the supplier details. Make sure the name is not too long.', 'danger');
+        }
+    }
+
+    async function handleSupplierDelete(id) {
+        showConfirmDialog(
+            'Delete Supplier?',
+            'This supplier record will be permanently removed.',
+            async () => {
+                closeConfirmDialog();
+                try {
+                    await api.suppliers.delete(id);
+                    flash('Supplier deleted.', 'success');
+                    if (supplierForm.id === id) {
+                        setSupplierForm(blankSupplierForm());
+                        setShowSupplierForm(false);
+                    }
+                    await loadWorkspace();
+                } catch (error) {
+                    flash(error.message || 'Failed to delete supplier.', 'error');
+                }
+            }
+        );
+    }
+
+    async function handleSupplierBulkDelete(ids) {
+        showConfirmDialog(
+            'Delete Multiple Suppliers?',
+            `Are you sure you want to delete ${ids.length} selected suppliers? This action cannot be undone.`,
+            async () => {
+                closeConfirmDialog();
+                try {
+                    await api.suppliers.bulkDelete(ids);
+                    flash(`${ids.length} suppliers deleted.`, 'success');
+                    await loadWorkspace();
+                } catch (error) {
+                    flash(error.message || 'Failed to delete suppliers.', 'error');
+                }
+            }
+        );
     }
 
     async function handleSaleSubmit(event) {
@@ -5684,6 +6212,52 @@ export default function App() {
             // 3. Save purchase (backend handles multi-item and inventory updates)
             savedPurchase = await api.purchases.save(submissionForm);
 
+            // 4. Auto-save supplier to the Suppliers directory
+            //    Upsert by name so repeated purchases from same supplier don't create duplicates
+            try {
+                const supplierName = submissionForm.supplier_name.trim();
+                if (supplierName && api.suppliers?.list && api.suppliers?.save) {
+                    const existingList = await api.suppliers.list({ search: supplierName });
+                    const existing = existingList.find(
+                        s => s.name.toLowerCase() === supplierName.toLowerCase()
+                    );
+                    if (existing) {
+                        // Update TIN and address if they were blank and now have values
+                        const needsUpdate =
+                            (!existing.tin && submissionForm.supplier_tin) ||
+                            (!existing.address && submissionForm.address) ||
+                            (!existing.contactNumber && submissionForm.supplier_contact) ||
+                            (!existing.category && submissionForm.supplier_category);
+                        if (needsUpdate) {
+                            await api.suppliers.save({
+                                id: existing.id,
+                                name: existing.name,
+                                tin: existing.tin || submissionForm.supplier_tin || '',
+                                address: existing.address || submissionForm.address || '',
+                                contact_number: existing.contactNumber || submissionForm.supplier_contact || '',
+                                email: existing.email || '',
+                                category: existing.category || submissionForm.supplier_category || '',
+                                notes: existing.notes || ''
+                            });
+                        }
+                    } else {
+                        // New supplier — create it
+                        await api.suppliers.save({
+                            name: supplierName,
+                            tin: submissionForm.supplier_tin || '',
+                            address: submissionForm.address || '',
+                            contact_number: submissionForm.supplier_contact || '',
+                            email: '',
+                            category: submissionForm.supplier_category || '',
+                            notes: ''
+                        });
+                    }
+                }
+            } catch (supplierErr) {
+                // Non-fatal — purchase is already saved, just log
+                console.warn('Auto-save supplier failed (non-fatal):', supplierErr);
+            }
+
             flash('Purchase record successfully saved.', 'success');
             setPurchaseForm(blankPurchaseForm());
             setShowPurchaseForm(false);
@@ -5771,6 +6345,10 @@ export default function App() {
         customers: {
             title: 'Customers',
             subtitle: 'Address book and contact records'
+        },
+        suppliers: {
+            title: 'Suppliers',
+            subtitle: 'Vendor directory and contact records'
         },
         sales: {
             title: 'Sales',
@@ -5891,9 +6469,6 @@ export default function App() {
                         </div>
                         <div className="header-actions">
                             <Pill tone="info">{meta?.version ?? '0.5.0'}</Pill>
-                            <button className="button secondary" type="button" onClick={() => loadWorkspace(true)} disabled={loading}>
-                                {loading ? 'Refreshing...' : 'Refresh workspace'}
-                            </button>
                         </div>
                     </header>
 
@@ -5951,6 +6526,23 @@ export default function App() {
                         />
                     ) : null}
 
+                    {activeTab === 'suppliers' ? (
+                        <SuppliersTab
+                            suppliers={suppliers}
+                            search={supplierSearch}
+                            setSearch={setSupplierSearch}
+                            showForm={showSupplierForm}
+                            form={supplierForm}
+                            setForm={setSupplierForm}
+                            onSubmit={handleSupplierSubmit}
+                            onEdit={handleEditSupplier}
+                            onDelete={handleSupplierDelete}
+                            onBulkDelete={handleSupplierBulkDelete}
+                            onCreateNew={handleStartSupplierForm}
+                            onCancel={handleCancelSupplierForm}
+                        />
+                    ) : null}
+
                     {activeTab === 'sales' ? (
                         <SalesTab
                             sales={sales}
@@ -5971,6 +6563,16 @@ export default function App() {
                             onViewReceipt={handleViewReceipt}
                             onExport={handleExportSales}
                             onImport={() => handleImportData('Sales')}
+                            onCreateCustomer={async (name) => {
+                                setCustomerForm({ ...blankCustomerForm(), name });
+                                setShowCustomerForm(true);
+                                setPendingCustomerAction(() => (newCustomer) => {
+                                    setSaleForm(prev => ({
+                                        ...prev,
+                                        customer_id: newCustomer.id
+                                    }));
+                                });
+                            }}
                             onUpdateStatus={async (saleId, newStatus) => {
                                 try {
                                     const fullSale = await window.agriLedger.sales.get(saleId);
@@ -6000,6 +6602,7 @@ export default function App() {
                         <PurchasesTab
                             purchases={purchases}
                             products={products}
+                            suppliers={suppliers}
                             taxSettings={taxSettings}
                             filters={purchaseFilters}
                             setFilters={setPurchaseFilters}
@@ -6015,8 +6618,24 @@ export default function App() {
                             onExport={handleExportPurchases}
                             onImport={() => handleImportData('Purchases')}
                             onUploadItemPhoto={handlePurchaseItemPhotoUpload}
+                            onCreateSupplier={async (name) => {
+                                setSupplierForm({ ...blankSupplierForm(), name, category: purchaseForm.expense_category });
+                                setShowSupplierForm(true);
+                                setPendingSupplierAction(() => (newSupplier) => {
+                                    setPurchaseForm(prev => ({
+                                        ...prev,
+                                        supplier_name: newSupplier.name,
+                                        supplier_tin: newSupplier.tin || '',
+                                        address: newSupplier.address || '',
+                                        supplier_contact: newSupplier.contactNumber || '',
+                                        supplier_category: newSupplier.category || ''
+                                    }));
+                                });
+                            }}
                         />
                     ) : null}
+
+
 
                     {activeTab === 'reports' ? (
                         <ReportsTab
@@ -6035,32 +6654,211 @@ export default function App() {
                         />
                     ) : null}
                 </main>
-
-                <ConfirmDialog
-                    title={confirmDialog.title}
-                    message={confirmDialog.message}
-                    isOpen={confirmDialog.isOpen}
-                    confirmText={confirmDialog.confirmText}
-                    confirmTone={confirmDialog.confirmTone}
-                    onConfirm={handleConfirmDialogConfirm}
-                    onCancel={closeConfirmDialog}
-                />
-
-                <SplitProductDialog
-                    product={splitDialog.product}
-                    isOpen={splitDialog.isOpen}
-                    onConfirm={handleConfirmSplit}
-                    onCancel={closeSplitDialog}
-                />
-
-
-                <ReceiptModal
-                    sale={receiptSale}
-                    onClose={() => setReceiptSale(null)}
-                />
             </div>
+
+            {/* Global Modal Layer (Highest Priority) */}
+            <ConfirmDialog
+                title={confirmDialog.title}
+                message={confirmDialog.message}
+                isOpen={confirmDialog.isOpen}
+                confirmText={confirmDialog.confirmText}
+                confirmTone={confirmDialog.confirmTone}
+                onConfirm={handleConfirmDialogConfirm}
+                onCancel={closeConfirmDialog}
+            />
+
+            <SplitProductDialog
+                product={splitDialog.product}
+                isOpen={splitDialog.isOpen}
+                onConfirm={handleConfirmSplit}
+                onCancel={closeSplitDialog}
+            />
+
+            <ReceiptModal
+                sale={receiptSale}
+                onClose={() => setReceiptSale(null)}
+            />
+
+            {showCustomerForm && (
+                <div className="modal-backdrop" style={{ zIndex: 9999 }}>
+                    <div className="modal-box">
+                        <div className="modal-header">
+                            <h3 className="modal-title">{customerForm.id ? 'Edit customer' : 'Add customer'}</h3>
+                            <button className="modal-close" type="button" onClick={handleCancelCustomerForm} aria-label="Close">✕</button>
+                        </div>
+                        <form className="form-stack" onSubmit={handleCustomerSubmit}>
+                            <div className="field-grid">
+                                <label className="field">
+                                    <span>Name <span style={{ color: 'var(--danger)' }}>*</span></span>
+                                    <input
+                                        className="input"
+                                        placeholder="Full customer name"
+                                        maxLength={100}
+                                        value={customerForm.name}
+                                        onChange={(e) => setCustomerForm({ ...customerForm, name: e.target.value })}
+                                        autoFocus
+                                    />
+                                </label>
+                                <label className="field">
+                                    <span>Contact number (optional)</span>
+                                    <input
+                                        className="input"
+                                        placeholder="Mobile or landline"
+                                        maxLength={20}
+                                        value={customerForm.contact_number}
+                                        onChange={(e) => setCustomerForm({ ...customerForm, contact_number: e.target.value })}
+                                    />
+                                </label>
+                                <label className="field span-2">
+                                    <span>Address 1 (optional)</span>
+                                    <textarea
+                                        className="textarea"
+                                        rows="2"
+                                        placeholder="Complete delivery address"
+                                        maxLength={500}
+                                        value={customerForm.address}
+                                        onChange={(e) => setCustomerForm({ ...customerForm, address: e.target.value })}
+                                    />
+                                </label>
+                                <label className="field span-2">
+                                    <span>Address 2 (optional)</span>
+                                    <textarea
+                                        className="textarea"
+                                        rows="2"
+                                        placeholder="Additional address info (e.g. Landmark, Floor, Suite)"
+                                        maxLength={500}
+                                        value={customerForm.address_2}
+                                        onChange={(e) => setCustomerForm({ ...customerForm, address_2: e.target.value })}
+                                    />
+                                </label>
+                                <label className="field">
+                                    <span>Customer username (optional)</span>
+                                    <input
+                                        className="input"
+                                        placeholder="Shopee / FB name"
+                                        value={customerForm.customer_username}
+                                        onChange={(e) => setCustomerForm({ ...customerForm, customer_username: e.target.value })}
+                                    />
+                                </label>
+                                <label className="field">
+                                    <span>TIN (optional)</span>
+                                    <input
+                                        className="input"
+                                        placeholder="Taxpayer ID"
+                                        value={customerForm.tin}
+                                        onChange={(e) => setCustomerForm({ ...customerForm, tin: e.target.value })}
+                                    />
+                                </label>
+                            </div>
+                            <div className="form-actions">
+                                <button className="button primary" type="submit">
+                                    {customerForm.id ? 'Update customer' : 'Save customer'}
+                                </button>
+                                <button className="button secondary" type="button" onClick={handleCancelCustomerForm}>
+                                    Cancel
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {showSupplierForm && (
+                <div className="modal-backdrop" style={{ zIndex: 9999 }}>
+                    <div className="modal-box">
+                        <div className="modal-header">
+                            <h3 className="modal-title">{supplierForm.id ? 'Edit supplier' : 'Add supplier'}</h3>
+                            <button className="modal-close" type="button" onClick={handleCancelSupplierForm} aria-label="Close">✕</button>
+                        </div>
+                        <form className="form-stack" onSubmit={handleSupplierSubmit}>
+                            <div className="field-grid">
+                                <label className="field">
+                                    <span>Name <span style={{ color: 'var(--danger)' }}>*</span></span>
+                                    <input
+                                        className="input"
+                                        placeholder="Company or supplier name"
+                                        maxLength={100}
+                                        value={supplierForm.name}
+                                        onChange={(e) => setSupplierForm({ ...supplierForm, name: e.target.value })}
+                                        autoFocus
+                                    />
+                                </label>
+                                <label className="field">
+                                    <span>Contact number (optional)</span>
+                                    <input
+                                        className="input"
+                                        placeholder="Mobile or landline"
+                                        maxLength={20}
+                                        value={supplierForm.contact_number}
+                                        onChange={(e) => setSupplierForm({ ...supplierForm, contact_number: e.target.value })}
+                                    />
+                                </label>
+                                <label className="field">
+                                    <span>Email (optional)</span>
+                                    <input
+                                        className="input"
+                                        type="email"
+                                        placeholder="supplier@example.com"
+                                        maxLength={100}
+                                        value={supplierForm.email}
+                                        onChange={(e) => setSupplierForm({ ...supplierForm, email: e.target.value })}
+                                    />
+                                </label>
+                                <label className="field">
+                                    <span>TIN (optional)</span>
+                                    <input
+                                        className="input"
+                                        placeholder="Taxpayer ID"
+                                        maxLength={30}
+                                        value={supplierForm.tin}
+                                        onChange={(e) => setSupplierForm({ ...supplierForm, tin: e.target.value })}
+                                    />
+                                </label>
+                                <label className="field">
+                                    <span>Category (optional)</span>
+                                    <input
+                                        className="input"
+                                        placeholder="e.g. Raw Materials, Packaging, Services"
+                                        maxLength={60}
+                                        value={supplierForm.category}
+                                        onChange={(e) => setSupplierForm({ ...supplierForm, category: e.target.value })}
+                                    />
+                                </label>
+                                <label className="field span-2">
+                                    <span>Address (optional)</span>
+                                    <textarea
+                                        className="textarea"
+                                        rows="2"
+                                        placeholder="Complete business address"
+                                        maxLength={500}
+                                        value={supplierForm.address}
+                                        onChange={(e) => setSupplierForm({ ...supplierForm, address: e.target.value })}
+                                    />
+                                </label>
+                                <label className="field span-2">
+                                    <span>Notes (optional)</span>
+                                    <textarea
+                                        className="textarea"
+                                        rows="2"
+                                        placeholder="Any additional notes about this supplier"
+                                        maxLength={500}
+                                        value={supplierForm.notes}
+                                        onChange={(e) => setSupplierForm({ ...supplierForm, notes: e.target.value })}
+                                    />
+                                </label>
+                            </div>
+                            <div className="form-actions">
+                                <button className="button primary" type="submit">
+                                    {supplierForm.id ? 'Update supplier' : 'Save supplier'}
+                                </button>
+                                <button className="button secondary" type="button" onClick={handleCancelSupplierForm}>
+                                    Cancel
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
         </>
     );
 }
-
-

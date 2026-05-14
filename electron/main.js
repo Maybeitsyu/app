@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, ipcMain, Menu, shell, dialog } from 'electron';
 import fs from 'node:fs';
 import { createRepository } from './db.js';
+import os from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -102,6 +103,11 @@ function registerIpcHandlers() {
   ipcMain.handle('customers:delete', (_, id) => repository.deleteCustomer(id));
   ipcMain.handle('customers:bulkDelete', (_, ids) => repository.bulkDeleteCustomers(ids));
 
+  ipcMain.handle('suppliers:list', (_, filters) => repository.listSuppliers(filters));
+  ipcMain.handle('suppliers:save', (_, payload) => repository.saveSupplier(payload));
+  ipcMain.handle('suppliers:delete', (_, id) => repository.deleteSupplier(id));
+  ipcMain.handle('suppliers:bulkDelete', (_, ids) => repository.bulkDeleteSuppliers(ids));
+
   ipcMain.handle('sales:list', (_, filters) => repository.listSales(filters));
   ipcMain.handle('sales:save', (_, payload) => repository.saveSale(payload));
   ipcMain.handle('sales:delete', (_, id) => repository.deleteSale(id));
@@ -173,6 +179,8 @@ function registerIpcHandlers() {
   ipcMain.handle('customers:exportExcel', async (_, { filePath }) => {
     return repository.exportCustomersToExcel(filePath);
   });
+
+
 }
 
 async function bootstrap() {
@@ -180,6 +188,7 @@ async function bootstrap() {
 
   repository = createRepository();
   registerIpcHandlers();
+
   buildMenu();
   mainWindow = createMainWindow();
 

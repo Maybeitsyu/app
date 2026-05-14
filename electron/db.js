@@ -214,6 +214,21 @@ function serializeCustomer(row) {
   };
 }
 
+function serializeSupplier(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    address: row.address,
+    contactNumber: cleanString(row.contact_number),
+    tin: row.tin,
+    email: row.email,
+    category: row.category,
+    notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
 function serializePurchase(row) {
   return {
     id: row.id,
@@ -1305,6 +1320,103 @@ function bulkDeleteCustomers(db, ids) {
 function getCustomerById(db, id) {
   const row = db.prepare('SELECT * FROM customers WHERE id = ?').get(cleanString(id));
   return row ? serializeCustomer(row) : null;
+}
+
+function listSuppliers(db, { search = '' } = {}) {
+  const query = cleanString(search).toLowerCase();
+  const params = [];
+  let sql = 'SELECT * FROM suppliers';
+
+  if (query) {
+    const like = `%${query}%`;
+    sql += `
+      WHERE lower(name) LIKE ?
+        OR lower(address) LIKE ?
+        OR lower(contact_number) LIKE ?
+        OR lower(tin) LIKE ?
+        OR lower(email) LIKE ?
+        OR lower(category) LIKE ?
+    `;
+    params.push(like, like, like, like, like, like);
+  }
+
+  sql += ' ORDER BY name ASC';
+
+  return db.prepare(sql).all(...params).map(serializeSupplier);
+}
+
+function upsertSupplier(db, payload = {}) {
+  const stamp = nowIso();
+  const id = cleanString(payload.id) || createId();
+  const name = cleanString(payload.name);
+  const address = cleanString(payload.address);
+  const contactNumber = cleanString(payload.contact_number ?? payload.contactNumber);
+  const tin = cleanString(payload.tin);
+  const email = cleanString(payload.email);
+  const category = cleanString(payload.category);
+  const notes = cleanString(payload.notes);
+
+  if (!name) {
+    throw new Error('Supplier name is required.');
+  }
+
+  db.prepare(
+    `
+      INSERT INTO suppliers (
+        id, name, address, contact_number, tin, email, category, notes, created_at, updated_at
+      )
+      VALUES (
+        @id, @name, @address, @contact_number, @tin, @email, @category, @notes, @created_at, @updated_at
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        address = excluded.address,
+        contact_number = excluded.contact_number,
+        tin = excluded.tin,
+        email = excluded.email,
+        category = excluded.category,
+        notes = excluded.notes,
+        updated_at = excluded.updated_at
+    `
+  ).run({
+    id,
+    name,
+    address,
+    contact_number: contactNumber,
+    tin,
+    email,
+    category,
+    notes,
+    created_at: stamp,
+    updated_at: stamp
+  });
+
+  return getSupplierById(db, id);
+}
+
+function deleteSupplier(db, id) {
+  const supplierId = cleanString(id);
+  if (!supplierId) {
+    throw new Error('Supplier id is required.');
+  }
+  db.prepare('DELETE FROM suppliers WHERE id = ?').run(supplierId);
+  return true;
+}
+
+function bulkDeleteSuppliers(db, ids) {
+  if (!Array.isArray(ids) || ids.length === 0) return false;
+  const tx = db.transaction(() => {
+    for (const id of ids) {
+      deleteSupplier(db, id);
+    }
+  });
+  tx();
+  return true;
+}
+
+function getSupplierById(db, id) {
+  const row = db.prepare('SELECT * FROM suppliers WHERE id = ?').get(cleanString(id));
+  return row ? serializeSupplier(row) : null;
 }
 
 function listPurchases(db, { search = '', category = '', companyName = '', fromDate = '', toDate = '' } = {}) {
@@ -3402,6 +3514,21 @@ export function createRepository() {
     },
     exportCustomersToExcel(filePath) {
       return exportCustomersToExcel(db, filePath);
+    },
+    listSuppliers(filters) {
+      return listSuppliers(db, filters);
+    },
+    saveSupplier(payload) {
+      return upsertSupplier(db, payload);
+    },
+    deleteSupplier(id) {
+      return deleteSupplier(db, id);
+    },
+    bulkDeleteSuppliers(ids) {
+      return bulkDeleteSuppliers(db, ids);
+    },
+    getSupplierById(id) {
+      return getSupplierById(db, id);
     }
   };
 }
