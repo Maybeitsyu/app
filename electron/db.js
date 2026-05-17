@@ -1310,7 +1310,7 @@ function uploadProductPhoto(filePath) {
   return destPath;
 }
 
-function uploadProductPhotoFile(fileName, fileData) {
+function uploadProductPhotoFile(fileName, fileData, isBase64 = false) {
   if (!fileName) {
     throw new Error('File name is required.');
   }
@@ -1325,7 +1325,19 @@ function uploadProductPhotoFile(fileName, fileData) {
 
   const safeName = cleanString(path.basename(fileName)) || createId();
   const destPath = path.join(photosDir, safeName);
-  const buffer = Buffer.isBuffer(fileData) ? fileData : Buffer.from(fileData);
+
+  let buffer;
+  if (Buffer.isBuffer(fileData)) {
+    buffer = fileData;
+  } else if (isBase64 || typeof fileData === 'string') {
+    let cleanData = fileData;
+    if (typeof fileData === 'string' && fileData.includes(';base64,')) {
+      cleanData = fileData.split(';base64,')[1];
+    }
+    buffer = Buffer.from(cleanData, 'base64');
+  } else {
+    buffer = Buffer.from(fileData);
+  }
 
   fs.writeFileSync(destPath, buffer);
   return destPath;
@@ -3023,27 +3035,36 @@ function importSalesFromCsv(db, csvContent) {
         `).run(customerId, customerName, address, contact, username, tin, nowIso(), nowIso());
       }
 
-      // 2. Get or Create Product
+      // 2. Get or Create Product & Resolve Cost basis
       let productId;
-      const existingProduct = db.prepare('SELECT id FROM products WHERE name = ?').get(productName);
+      let productCost = 0;
+      const existingProduct = db.prepare('SELECT id, average_cost, cost FROM products WHERE name = ?').get(productName);
       if (existingProduct) {
         productId = existingProduct.id;
+        productCost = existingProduct.average_cost || existingProduct.cost || 0;
       } else {
         productId = createId();
         const code = productName.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10) + '-' + createId().slice(0, 4);
         db.prepare(`
-          INSERT INTO products (id, code, name, category, unit, cost, srp, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(productId, code, productName, 'Others / Miscellaneous', unit || 'pc', 0, unitPrice, nowIso(), nowIso());
+          INSERT INTO products (id, code, name, category, unit, cost, average_cost, srp, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(productId, code, productName, 'Others / Miscellaneous', unit || 'pc', 0, 0, unitPrice, nowIso(), nowIso());
       }
 
-      // 3. Create Sale (Using simple Insert, not affecting inventory for imports unless specified)
+      // 3. Create Sale (Using dynamic costing and profit calculation)
       const saleId = createId();
-      const vat = calculateSaleLine({ qty, unitPrice, isVatExempt: row[headers.indexOf('VAT EXEMPT SALES')] ? true : false, vatRate });
+      const isVatExempt = row[headers.indexOf('VAT EXEMPT SALES')] ? true : false;
+      const vat = calculateSaleLine({ 
+        qty, 
+        unitPrice, 
+        unitCost: productCost, 
+        isVatExempt, 
+        vatRate 
+      });
 
       db.prepare(`
-        INSERT INTO sales (id, company_name, date, si_number, customer_id, channel, status, remarks, gross_amount, input_vat, output_vat, vat_exempt_amount, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO sales (id, company_name, date, si_number, customer_id, channel, status, remarks, gross_amount, input_vat, output_vat, vat_exempt_amount, profit, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         saleId,
         companyNames[0],
@@ -3057,6 +3078,7 @@ function importSalesFromCsv(db, csvContent) {
         vat.inputVat,
         vat.outputVat,
         vat.vatExemptAmount,
+        vat.profit,
         nowIso(),
         nowIso()
       );
@@ -3076,9 +3098,9 @@ function importSalesFromCsv(db, csvContent) {
         vat.inputVat,
         vat.outputVat,
         vat.vatExemptAmount,
-        0, // Costing unknown on import
-        0,
-        vat.grossAmount - vat.outputVat,
+        productCost, 
+        vat.totalCost,
+        vat.profit,
         nowIso()
       );
 
@@ -3090,9 +3112,14 @@ function importSalesFromCsv(db, csvContent) {
   return tx();
 }
 
-async function analyzeExcelFile(filePath) {
+async function analyzeExcelFile(filePathOrData, isBufferData = false) {
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile(filePath);
+  if (isBufferData) {
+    const buffer = Buffer.isBuffer(filePathOrData) ? filePathOrData : Buffer.from(filePathOrData, 'base64');
+    await workbook.xlsx.load(buffer);
+  } else {
+    await workbook.xlsx.readFile(filePathOrData);
+  }
   const sheets = [];
 
   workbook.eachSheet((sheet) => {
@@ -3139,10 +3166,15 @@ async function analyzeExcelFile(filePath) {
   return sheets;
 }
 
-async function importFullReportFromExcel(db, filePath, selectedSheetNames = null) {
-  console.log('>>> [START] importFullReportFromExcel:', filePath);
+async function importFullReportFromExcel(db, filePathOrData, selectedSheetNames = null, isBufferData = false) {
+  console.log('>>> [START] importFullReportFromExcel:', isBufferData ? 'binary buffer' : filePathOrData);
   const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.readFile(filePath);
+  if (isBufferData) {
+    const buffer = Buffer.isBuffer(filePathOrData) ? filePathOrData : Buffer.from(filePathOrData, 'base64');
+    await workbook.xlsx.load(buffer);
+  } else {
+    await workbook.xlsx.readFile(filePathOrData);
+  }
 
   let salesImported = 0;
   let purchasesImported = 0;
@@ -3309,25 +3341,46 @@ async function importFullReportFromExcel(db, filePath, selectedSheetNames = null
           const receiptNumberRaw = getValByKeys(['RECEIPT #', 'RECEIPT#', 'RECEIPT']);
           const receiptNumberVal = receiptNumberRaw ? parseInt(receiptNumberRaw, 10) : null;
 
-          // Read Costing and Profit from Excel
-          const costing = parseFloat(getValByKeys(['COSTING', 'UNIT COST'])) || 0;
-          const totalCost = parseFloat(getValByKeys(['TOTAL COST', 'TOTALCOST', 'COST'])) || 0;
-          const rowProfit = parseFloat(getValByKeys(['PROFIT'])) || 0;
-
-          // Get/Create Product
+          // Get/Create Product & Resolve Cost basis
           let productId;
-          const existingP = db.prepare('SELECT id FROM products WHERE lower(name) = lower(?)').get(product);
-          if (existingP) productId = existingP.id;
-          else {
+          let productCost = 0;
+          const existingP = db.prepare('SELECT id, average_cost, cost FROM products WHERE lower(name) = lower(?)').get(product);
+          if (existingP) {
+            productId = existingP.id;
+            productCost = existingP.average_cost || existingP.cost || 0;
+          } else {
             productId = createId();
             const code = product.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10) + '-' + createId().slice(0, 4);
-            db.prepare('INSERT INTO products (id, code, name, category, unit, cost, average_cost, srp, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(productId, code, product, 'Imported', unit || 'pc', costing, costing, price, nowIso(), nowIso());
+            const initialCost = parseFloat(getValByKeys(['COSTING', 'UNIT COST'])) || 0;
+            db.prepare('INSERT INTO products (id, code, name, category, unit, cost, average_cost, srp, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(productId, code, product, 'Imported', unit || 'pc', initialCost, initialCost, price, nowIso(), nowIso());
+            productCost = initialCost;
+          }
+
+          // Read Costing and Profit from Excel, with database fallbacks
+          let finalCosting = parseFloat(getValByKeys(['COSTING', 'UNIT COST'])) || 0;
+          if (finalCosting === 0) {
+            finalCosting = productCost;
+          }
+
+          let finalTotalCost = parseFloat(getValByKeys(['TOTAL COST', 'TOTALCOST', 'COST'])) || 0;
+          if (finalTotalCost === 0) {
+            finalTotalCost = roundMoney(qty * finalCosting);
           }
 
           const isVatExempt = asBoolean(getValByKeys(['VAT EXEMPT SALES', 'VAT EXEMPT SALES ', 'VATEXEMPT']));
           const company = normalizeCompany(getValByKeys(['COMPANY']));
 
-          const vat = calculateSaleLine({ qty, unitPrice: price, isVatExempt, vatRate });
+          // Calculate complete VAT, Costing, and Profit line dynamically using our core finance library
+          const vat = calculateSaleLine({ 
+            qty, 
+            unitPrice: price, 
+            unitCost: finalCosting, 
+            isVatExempt, 
+            vatRate 
+          });
+
+          const excelProfit = parseFloat(getValByKeys(['PROFIT'])) || 0;
+          const finalProfit = excelProfit !== 0 ? excelProfit : vat.profit;
 
           // Each row = one sale (no grouping)
           const saleId = createId();
@@ -3335,14 +3388,14 @@ async function importFullReportFromExcel(db, filePath, selectedSheetNames = null
             saleId, company, date, receiptNumberVal, siNumber || '', customerId, channel,
             remarks === 'PAID' ? 'PAID' : 'A/R', remarks,
             vat.grossAmount, vat.inputVat, vat.outputVat, vat.vatExemptAmount,
-            rowProfit,
+            finalProfit,
             nowIso(), nowIso()
           );
 
           db.prepare('INSERT INTO sale_items (id, sale_id, product_id, qty, unit, unit_price, gross_amount, input_vat, output_vat, vat_exempt_amount, costing, total_cost, profit, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
             createId(), saleId, productId, qty, unit, price,
             vat.grossAmount, vat.inputVat, vat.outputVat, vat.vatExemptAmount,
-            costing, totalCost, rowProfit,
+            finalCosting, finalTotalCost, finalProfit,
             nowIso()
           );
           salesImported++;
@@ -3708,11 +3761,11 @@ export function createRepository() {
     importSalesFromCsv(csvContent) {
       return importSalesFromCsv(db, csvContent);
     },
-    importSalesFromExcel(filePath, selectedSheetNames) {
-      return importFullReportFromExcel(db, filePath, selectedSheetNames);
+    importSalesFromExcel(filePath, selectedSheetNames, isBufferData = false) {
+      return importFullReportFromExcel(db, filePath, selectedSheetNames, isBufferData);
     },
-    analyzeExcelFile(filePath) {
-      return analyzeExcelFile(filePath);
+    analyzeExcelFile(filePath, isBufferData = false) {
+      return analyzeExcelFile(filePath, isBufferData);
     },
     exportProductsToExcel(filePath) {
       return exportProductsToExcel(db, filePath);

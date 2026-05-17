@@ -98,7 +98,7 @@ function registerIpcHandlers() {
   });
   ipcMain.handle('products:uploadPhoto', (_, filePath) => repository.uploadPhoto(filePath));
   ipcMain.handle('products:uploadPhotoFile', (_, payload) => {
-    return repository.uploadPhotoFile(payload.fileName, payload.fileData);
+    return repository.uploadPhotoFile(payload.fileName, payload.fileData, payload.isBase64);
   });
   ipcMain.handle('products:delete', (_, id) => {
     const res = repository.deleteProduct(id);

@@ -3737,7 +3737,8 @@ function PurchasesTab({
     onExport,
     onImport,
     onUploadItemPhoto,
-    onCreateSupplier
+    onCreateSupplier,
+    onViewVoucher
 }) {
     const [selectedIds, setSelectedIds] = useState([]);
     const [activePurchaseId, setActivePurchaseId] = useState(null);
@@ -4378,10 +4379,98 @@ function PurchasesTab({
 
                                         {activePurchaseId === purchase.id && (
                                             <td className="row-overlay-cell" onClick={(e) => e.stopPropagation()}>
-                                                <div className="row-overlay" onClick={() => setActivePurchaseId(null)}>
-                                                    <div className="product-card-overlay-actions" style={{ flexDirection: 'row', maxWidth: 'none' }} onClick={(e) => e.stopPropagation()}>
-                                                        <button className="btn-card-edit" type="button" onClick={(e) => { e.stopPropagation(); onEdit(purchase); setActivePurchaseId(null); }}>Edit</button>
-                                                        <button className="btn-card-delete" type="button" onClick={(e) => { e.stopPropagation(); onDelete(purchase.id); setActivePurchaseId(null); }}>Delete</button>
+                                                <div className="product-card-overlay" style={{ borderRadius: 0, padding: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setActivePurchaseId(null)}>
+                                                    <div className="quick-view-box" style={{
+                                                        background: 'var(--panel-solid)',
+                                                        border: '1px solid var(--border)',
+                                                        borderRadius: 'var(--radius-xl)',
+                                                        padding: '24px',
+                                                        boxShadow: 'var(--shadow)',
+                                                        display: 'flex',
+                                                        flexDirection: 'column',
+                                                        alignItems: 'stretch',
+                                                        gap: '16px',
+                                                        width: '100%',
+                                                        maxWidth: '450px',
+                                                        maxHeight: '90vh',
+                                                        overflowY: 'auto',
+                                                        animation: 'overlayFadeIn 300ms cubic-bezier(0.16, 1, 0.3, 1)'
+                                                    }}>
+                                                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '-8px' }}>
+                                                            <button
+                                                                className="modal-close"
+                                                                type="button"
+                                                                onClick={(e) => { e.stopPropagation(); setActivePurchaseId(null); }}
+                                                                style={{ position: 'static', width: '32px', height: '32px' }}
+                                                                aria-label="Close"
+                                                            >✕</button>
+                                                        </div>
+                                                        <div className="quick-view-items-stack" style={{
+                                                            display: 'flex',
+                                                            flexDirection: 'column',
+                                                            gap: '16px',
+                                                            maxHeight: '440px',
+                                                            overflowY: 'auto',
+                                                            paddingRight: '6px'
+                                                        }}>
+                                                            {purchase.items && purchase.items.length > 0 && purchase.items[0]?.id ? (
+                                                                purchase.items.filter(i => i.productName || i.name).map((item, i) => (
+                                                                    <div key={i} style={{
+                                                                        background: 'var(--panel-strong)',
+                                                                        border: '1px solid var(--border)',
+                                                                        borderRadius: 'var(--radius-lg)',
+                                                                        padding: '16px',
+                                                                        display: 'flex',
+                                                                        alignItems: 'center',
+                                                                        gap: '20px',
+                                                                        boxShadow: 'var(--shadow-soft)'
+                                                                    }}>
+                                                                        <div style={{
+                                                                            width: '40px',
+                                                                            height: '40px',
+                                                                            background: 'var(--primary-fade)',
+                                                                            color: 'var(--primary-strong)',
+                                                                            borderRadius: '10px',
+                                                                            display: 'flex',
+                                                                            alignItems: 'center',
+                                                                            justifyContent: 'center',
+                                                                            fontSize: '1rem',
+                                                                            flexShrink: 0,
+                                                                            fontWeight: 800
+                                                                        }}>{i + 1}</div>
+                                                                        <div style={{ flex: 1 }}>
+                                                                            <div style={{ fontWeight: 700, fontSize: '0.95rem', marginBottom: '2px' }}>{item.productName || item.name}</div>
+                                                                            <div className="muted" style={{ fontSize: '0.8rem', display: 'flex', gap: '12px' }}>
+                                                                                <span>{formatQuantity(item.qty || item.quantity)} {item.unit}</span>
+                                                                                <span>•</span>
+                                                                                <span>{formatCurrency(item.unitCost || item.unit_cost)} / {item.unit}</span>
+                                                                            </div>
+                                                                        </div>
+                                                                        <div style={{ fontWeight: 700, color: 'var(--primary-strong)' }}>
+                                                                            {formatCurrency((item.qty || item.quantity) * (item.unitCost || item.unit_cost))}
+                                                                        </div>
+                                                                    </div>
+                                                                ))
+                                                            ) : (
+                                                                <div style={{ textAlign: 'center', padding: '24px', color: 'var(--muted)' }}>
+                                                                    <div style={{ fontWeight: 700, marginBottom: '4px' }}>Category expense</div>
+                                                                    <div>{purchase.expenseCategory}</div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+
+                                                        <div className="product-card-overlay-actions" style={{
+                                                            display: 'grid',
+                                                            gridTemplateColumns: 'repeat(2, 1fr)',
+                                                            width: '100%',
+                                                            gap: '16px',
+                                                            marginTop: '8px',
+                                                            paddingTop: '20px',
+                                                            borderTop: '1px solid var(--border)'
+                                                        }} onClick={(e) => e.stopPropagation()}>
+                                                            <button className="button primary" style={{ width: '100%', borderRadius: 'var(--radius-md)', padding: '12px', fontWeight: 700 }} onClick={(e) => { e.stopPropagation(); onEdit && onEdit(purchase); setActivePurchaseId(null); }}>Edit</button>
+                                                            <button className="button danger" style={{ width: '100%', borderRadius: 'var(--radius-md)', padding: '12px', fontWeight: 700 }} onClick={(e) => { e.stopPropagation(); onDelete(purchase.id); setActivePurchaseId(null); }}>Delete</button>
+                                                        </div>
                                                     </div>
                                                 </div>
                                             </td>
@@ -5030,6 +5119,150 @@ function ReceiptModal({ sale, onClose }) {
     );
 }
 
+function PurchaseVoucherModal({ purchase, onClose }) {
+    if (!purchase) return null;
+
+    const maxRows = 16;
+    const items = purchase.items || [];
+    const rows = [];
+    for (let i = 0; i < maxRows; i++) {
+        rows.push(items[i] || null);
+    }
+
+    const formattedTotal = formatCurrency(purchase.grossAmount);
+    const formattedNetOfVat = formatCurrency(purchase.netOfVat || (purchase.grossAmount - purchase.inputVat));
+    const formattedInputVat = formatCurrency(purchase.inputVat);
+
+    return (
+        <div className="modal-backdrop" style={{ zIndex: 9999 }}>
+            <div className="modal-box receipt-box">
+                <div className="receipt-grid">
+
+                    {/* LEFT PANE */}
+                    <div className="receipt-pane-left">
+                        <div className="receipt-header-left">
+                            <img src={logo} alt="Logo" className="receipt-logo" />
+                            <h2 className="receipt-company-title">BATANGAS DAIRY FARMTECH INC.</h2>
+                        </div>
+
+                        <div className="receipt-sold-to-box">
+                            <span className="receipt-box-label">PAID TO:</span>
+                            <span className="receipt-box-value" title={purchase.supplierName || 'Cash Supplier'}>
+                                {purchase.supplierName || 'Cash Supplier'}
+                            </span>
+                        </div>
+
+                        <table className="receipt-table-left">
+                            <thead>
+                                <tr>
+                                    <th style={{ width: '20%' }}>QTY</th>
+                                    <th style={{ width: '20%' }}>UNIT</th>
+                                    <th style={{ width: '60%' }}>DESCRIPTION</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((item, idx) => (
+                                    <tr key={idx}>
+                                        <td style={{ width: '20%', textAlign: 'center' }}>
+                                            {item ? formatQuantity(item.qty) : ''}
+                                        </td>
+                                        <td style={{ width: '20%', textAlign: 'center' }}>
+                                            {item ? item.unit : ''}
+                                        </td>
+                                        <td style={{
+                                            width: '60%',
+                                            whiteSpace: 'nowrap',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis'
+                                        }}>
+                                            {item ? item.productName : (idx === 0 ? purchase.expenseCategory : '')}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+
+                        <div className="receipt-footer-left">
+                            <div className="receipt-total-label-row">
+                                TOTAL EXPENDITURE
+                            </div>
+                            <div className="receipt-signature-row">
+                                <div className="receipt-sig-line"></div>
+                                <span className="receipt-sig-sub">PAYEE / AUTHORIZED SIGNATURE</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* RIGHT PANE */}
+                    <div className="receipt-pane-right">
+                        <div className="receipt-header-right">
+                            <div className="receipt-invoice-title">PAYMENT VOUCHER</div>
+                            <div className="receipt-meta-grid">
+                                <div className="receipt-meta-cell">
+                                    <span>DATE</span>
+                                    <strong>{formatDateShort(purchase.date)}</strong>
+                                </div>
+                                <div className="receipt-meta-cell">
+                                    <span>OR / INV #</span>
+                                    <strong>{purchase.receiptNumber ? String(purchase.receiptNumber) : 'N/A'}</strong>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="receipt-address-box">
+                            <span className="receipt-box-label">TIN / ADDRESS:</span>
+                            <span className="receipt-box-value" title={`${purchase.supplierTin ? 'TIN: ' + purchase.supplierTin : ''} ${purchase.address || ''}`.trim() || '-'}>
+                                {`${purchase.supplierTin ? 'TIN: ' + purchase.supplierTin : ''} ${purchase.address || ''}`.trim() || '-'}
+                            </span>
+                        </div>
+
+                        <table className="receipt-table-right">
+                            <thead>
+                                <tr>
+                                    <th style={{ width: '45%' }}>UNIT COST</th>
+                                    <th style={{ width: '55%' }}>AMOUNT</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((item, idx) => (
+                                    <tr key={idx}>
+                                        <td style={{ width: '45%', textAlign: 'right' }}>
+                                            {item ? new Intl.NumberFormat('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(item.unitCost) : ''}
+                                        </td>
+                                        <td style={{ width: '55%', textAlign: 'right' }}>
+                                            {item ? new Intl.NumberFormat('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(item.grossAmount) : (idx === 0 ? new Intl.NumberFormat('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(purchase.grossAmount) : '')}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+
+                        <div className="receipt-footer-right" style={{ display: 'flex', flexDirection: 'column', padding: '12px 16px', gap: '4px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--muted)', fontWeight: 500 }}>
+                                <span>NET OF VAT:</span>
+                                <span>{formattedNetOfVat}</span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--muted)', fontWeight: 500, borderBottom: '1px dashed var(--border)', paddingBottom: '4px' }}>
+                                <span>INPUT VAT:</span>
+                                <span>{formattedInputVat}</span>
+                            </div>
+                            <div className="receipt-total-value-row" style={{ display: 'flex', justifyContent: 'flex-end', fontSize: '1.25rem', fontWeight: 800, color: 'var(--primary-strong)', marginTop: '4px' }}>
+                                {formattedTotal}
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <div className="form-actions" style={{ marginTop: '24px', justifyContent: 'center' }}>
+                    <button className="button primary" onClick={() => window.print()}>Print Voucher</button>
+                    <button className="button secondary" onClick={onClose}>✕ Close</button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 function ConfirmDialog({
     title,
     message,
@@ -5361,6 +5594,7 @@ export default function App() {
         isSecondStep: false
     });
     const [receiptSale, setReceiptSale] = useState(null);
+    const [receiptPurchase, setReceiptPurchase] = useState(null);
     // Import dialog state
     const [importDialog, setImportDialog] = useState({
         isOpen: false,
@@ -6084,6 +6318,77 @@ export default function App() {
     }
 
     async function handleImportData(typeLabel = 'data', preferredType = null) {
+        // If running in client mode (mobile browser/tablet browser), api.files won't exist
+        const isClient = !api || !api.files;
+
+        if (isClient) {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.xlsx,.csv';
+            input.onchange = async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+
+                const isExcel = file.name.toLowerCase().endsWith('.xlsx');
+                
+                try {
+                    if (isExcel) {
+                        flash('Uploading and analyzing Excel file...', 'neutral');
+                        const reader = new FileReader();
+                        reader.onload = async (evt) => {
+                            try {
+                                const arrayBuffer = evt.target.result;
+                                // Convert ArrayBuffer to base64
+                                let binary = '';
+                                const bytes = new Uint8Array(arrayBuffer);
+                                const len = bytes.byteLength;
+                                for (let i = 0; i < len; i++) {
+                                    binary += String.fromCharCode(bytes[i]);
+                                }
+                                const base64Data = window.btoa(binary);
+
+                                const sheets = await window.agriLedger.app.analyzeExcel({ 
+                                    fileData: base64Data,
+                                    isBufferData: true 
+                                });
+                                
+                                setImportDialog({
+                                    isOpen: true,
+                                    filePath: null,
+                                    fileData: base64Data,
+                                    sheets: sheets.map(s => ({
+                                        ...s,
+                                        selected: preferredType ? (s.type === preferredType) : (s.type !== 'UNKNOWN')
+                                    }))
+                                });
+                            } catch (err) {
+                                flash(err.message || 'Failed to analyze Excel file.', 'error');
+                            }
+                        };
+                        reader.readAsArrayBuffer(file);
+                    } else {
+                        flash(`Importing CSV ${typeLabel}...`, 'neutral');
+                        const reader = new FileReader();
+                        reader.onload = async (evt) => {
+                            try {
+                                const csvContent = evt.target.result;
+                                const count = await window.agriLedger.data.importSalesCsv({ csvContent });
+                                flash(`Successfully imported ${count} records!`);
+                                loadWorkspace();
+                            } catch (err) {
+                                flash(err.message || 'Failed to import CSV.', 'error');
+                            }
+                        };
+                        reader.readAsText(file);
+                    }
+                } catch (err) {
+                    flash(err.message || 'Failed to read file.', 'error');
+                }
+            };
+            input.click();
+            return;
+        }
+
         try {
             const filePath = await api.files.openDialog({
                 title: `Import ${typeLabel}`,
@@ -6101,6 +6406,7 @@ export default function App() {
                     setImportDialog({
                         isOpen: true,
                         filePath,
+                        fileData: null,
                         sheets: sheets.map(s => ({
                             ...s,
                             selected: preferredType ? (s.type === preferredType) : (s.type !== 'UNKNOWN')
@@ -6120,7 +6426,7 @@ export default function App() {
     }
 
     async function handleConfirmImport() {
-        const { filePath, sheets } = importDialog;
+        const { filePath, fileData, sheets } = importDialog;
         const selectedSheetNames = sheets.filter(s => s.selected).map(s => s.name);
 
         if (selectedSheetNames.length === 0) {
@@ -6132,7 +6438,16 @@ export default function App() {
         flash('Importing selected sheets...', 'neutral');
 
         try {
-            const count = await api.data.importSalesExcel({ filePath, selectedSheetNames });
+            let count;
+            if (fileData) {
+                count = await window.agriLedger.data.importSalesExcel({ 
+                    fileData, 
+                    selectedSheetNames, 
+                    isBufferData: true 
+                });
+            } else {
+                count = await api.data.importSalesExcel({ filePath, selectedSheetNames });
+            }
             flash(`Successfully imported ${count} records from ${selectedSheetNames.length} sheets.`);
             loadWorkspace();
         } catch (error) {
@@ -7003,6 +7318,7 @@ export default function App() {
                             onExport={handleExportPurchases}
                             onImport={() => handleImportData('Purchases')}
                             onUploadItemPhoto={handlePurchaseItemPhotoUpload}
+                            onViewVoucher={setReceiptPurchase}
                             onCreateSupplier={async (name) => {
                                 setSupplierForm({ ...blankSupplierForm(), name, category: purchaseForm.expense_category });
                                 setShowSupplierForm(true);
@@ -7069,6 +7385,11 @@ export default function App() {
             <ReceiptModal
                 sale={receiptSale}
                 onClose={() => setReceiptSale(null)}
+            />
+
+            <PurchaseVoucherModal
+                purchase={receiptPurchase}
+                onClose={() => setReceiptPurchase(null)}
             />
 
             {showCustomerForm && (

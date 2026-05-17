@@ -61,7 +61,24 @@
             delete: (id) => httpInvoke('products:delete', id),
             bulkDelete: (ids) => httpInvoke('products:bulkDelete', ids),
             getStock: (productId) => httpInvoke('products:getStock', productId),
-            split: (payload) => httpInvoke('products:split', payload)
+            split: (payload) => httpInvoke('products:split', payload),
+            uploadPhotoFile: async (payload) => {
+              let fileData = payload.fileData;
+              if (fileData instanceof ArrayBuffer) {
+                let binary = '';
+                const bytes = new Uint8Array(fileData);
+                const len = bytes.byteLength;
+                for (let i = 0; i < len; i++) {
+                  binary += String.fromCharCode(bytes[i]);
+                }
+                fileData = window.btoa(binary);
+              }
+              return httpInvoke('products:uploadPhotoFile', {
+                fileName: payload.fileName,
+                fileData,
+                isBase64: true
+              });
+            }
           },
           customers: {
             list: (filters) => httpInvoke('customers:list', filters),
@@ -87,6 +104,10 @@
             save: (payload) => httpInvoke('purchases:save', payload),
             delete: (id) => httpInvoke('purchases:delete', id),
             bulkDelete: (ids) => httpInvoke('purchases:bulkDelete', ids)
+          },
+          data: {
+            importSalesCsv: (opts) => httpInvoke('sales:importCsv', opts),
+            importSalesExcel: (opts) => httpInvoke('sales:importExcel', opts)
           },
           batches: {
             create: (payload) => httpInvoke('batches:create', payload)

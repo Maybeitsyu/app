@@ -13,9 +13,9 @@ const LOCAL_ONLY_CHANNELS = new Set([
   'app:saveFileDialog', 'app:openFileDialog', 'app:writeFile', 'app:readFile',
   'app:openPath', 'app:openDataFolder',
   'sales:exportExcel', 'products:exportExcel', 'purchases:exportExcel',
-  'customers:exportExcel', 'sales:importCsv', 'sales:importExcel',
-  'app:exportFullExcel', 'app:analyzeExcel', 'reports:exportFinancialStatementExcel',
-  'products:uploadPhoto', 'products:uploadPhotoFile',
+  'customers:exportExcel',
+  'app:exportFullExcel', 'reports:exportFinancialStatementExcel',
+  'products:uploadPhoto',
 ]);
 
 // ── HTTP-based invoke for client mode ──
@@ -171,7 +171,23 @@ contextBridge.exposeInMainWorld('agriLedger', {
     delete: (id) => invoke('products:delete', id),
     bulkDelete: (ids) => invoke('products:bulkDelete', ids),
     uploadPhoto: (filePath) => invoke('products:uploadPhoto', filePath),
-    uploadPhotoFile: (payload) => invoke('products:uploadPhotoFile', payload),
+    uploadPhotoFile: (payload) => {
+      let fileData = payload.fileData;
+      if (fileData instanceof ArrayBuffer) {
+        let binary = '';
+        const bytes = new Uint8Array(fileData);
+        const len = bytes.byteLength;
+        for (let i = 0; i < len; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        fileData = window.btoa(binary);
+      }
+      return invoke('products:uploadPhotoFile', {
+        fileName: payload.fileName,
+        fileData,
+        isBase64: true
+      });
+    },
     getStock: (productId) => invoke('products:getStock', productId),
     split: (payload) => invoke('products:split', payload)
   },

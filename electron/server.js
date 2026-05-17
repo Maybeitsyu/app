@@ -69,6 +69,10 @@ export function createSyncServer(repository, photosDir, uiDir) {
       'products:bulkDelete': (p) => repository.bulkDeleteProducts(p),
       'products:getStock':   (p) => repository.getProductStock(p),
       'products:split':      (p) => repository.splitProduct(p.productId, p.quantity, p.laborCost, p.packagingCost, p.srp),
+      'products:uploadPhotoFile': (p) => {
+        const buffer = p.isBase64 ? Buffer.from(p.fileData, 'base64') : p.fileData;
+        return repository.uploadPhotoFile(p.fileName, buffer);
+      },
 
       'customers:list':       (p) => repository.listCustomers(p),
       'customers:save':       (p) => repository.saveCustomer(p),
@@ -90,6 +94,20 @@ export function createSyncServer(repository, photosDir, uiDir) {
       'purchases:save':       (p) => repository.savePurchase(p),
       'purchases:delete':     (p) => repository.deletePurchase(p),
       'purchases:bulkDelete': (p) => repository.bulkDeletePurchases(p),
+
+      'app:analyzeExcel': (p) => {
+        if (p.fileData) {
+          return repository.analyzeExcelFile(p.fileData, true);
+        }
+        return repository.analyzeExcelFile(p.filePath);
+      },
+      'sales:importExcel': (p) => {
+        if (p.fileData) {
+          return repository.importSalesFromExcel(p.fileData, p.selectedSheetNames, true);
+        }
+        return repository.importSalesFromExcel(p.filePath, p.selectedSheetNames);
+      },
+      'sales:importCsv': (p) => repository.importSalesFromCsv(p.csvContent),
     };
 
     return handlers[channel] || null;
@@ -97,10 +115,10 @@ export function createSyncServer(repository, photosDir, uiDir) {
 
   const WRITE_CHANNELS = new Set([
     'settings:saveTax',
-    'products:save', 'products:delete', 'products:bulkDelete', 'products:split',
+    'products:save', 'products:delete', 'products:bulkDelete', 'products:split', 'products:uploadPhotoFile',
     'customers:save', 'customers:delete', 'customers:bulkDelete',
     'suppliers:save', 'suppliers:delete', 'suppliers:bulkDelete',
-    'sales:save', 'sales:delete', 'sales:bulkDelete',
+    'sales:save', 'sales:delete', 'sales:bulkDelete', 'sales:importCsv', 'sales:importExcel',
     'purchases:save', 'purchases:delete', 'purchases:bulkDelete',
   ]);
 
@@ -109,9 +127,9 @@ export function createSyncServer(repository, photosDir, uiDir) {
     'app:saveFileDialog', 'app:openFileDialog', 'app:writeFile', 'app:readFile',
     'app:openPath', 'app:openDataFolder',
     'sales:exportExcel', 'products:exportExcel', 'purchases:exportExcel',
-    'customers:exportExcel', 'sales:importCsv', 'sales:importExcel',
-    'app:exportFullExcel', 'app:analyzeExcel', 'reports:exportFinancialStatementExcel',
-    'products:uploadPhoto', 'products:uploadPhotoFile',
+    'customers:exportExcel',
+    'app:exportFullExcel', 'reports:exportFinancialStatementExcel',
+    'products:uploadPhoto',
   ]);
 
   // ── Routes ──
