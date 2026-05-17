@@ -78,9 +78,112 @@ function asEnum(value, allowedValues, fallback) {
 function normalizeCompany(value) {
   const s = cleanString(value).toLowerCase();
   if (!s) return companyNames[0];
-  
+
   const found = companyNames.find(c => c.toLowerCase() === s);
   return found || companyNames[0];
+}
+
+function normalizeExpenseCategory(value) {
+  const val = cleanString(value).trim();
+  if (!val) return 'Miscellaneous';
+
+  const lowerVal = val.toLowerCase();
+
+  // 1. Direct case-insensitive match
+  const foundExact = expenseCategories.find(c => c.toLowerCase() === lowerVal);
+  if (foundExact) return foundExact;
+
+  // 2. Keyword/substring matches (robust fallback for Excel variations)
+  if (lowerVal.includes('light') || lowerVal.includes('water') || lowerVal.includes('electricity') || lowerVal.includes('power') || lowerVal.includes('communication')) {
+    return 'Communication, Light and Water';
+  }
+  if (lowerVal.includes('fuel') || lowerVal.includes('oil')) {
+    return 'Fuel & Oil';
+  }
+  if (lowerVal.includes('repair') || lowerVal.includes('maintenance')) {
+    return 'Repairs & Maintenance';
+  }
+  if (lowerVal.includes('professional') || lowerVal.includes('consult')) {
+    return 'Professional Fees';
+  }
+  if (lowerVal.includes('delivery') || lowerVal.includes('shipping') || lowerVal.includes('courier') || lowerVal.includes('freight')) {
+    return "Delivery Charge & Fee's";
+  }
+  if (lowerVal.includes('travel') || lowerVal.includes('transportation') || lowerVal.includes('transport') || lowerVal.includes('toll')) {
+    return 'Transportation and Travel';
+  }
+  if (lowerVal.includes('representation')) {
+    return 'Representation';
+  }
+  if (lowerVal.includes('insurance')) {
+    return 'Insurance';
+  }
+  if (lowerVal.includes('office') || lowerVal.includes('stationery') || (lowerVal.includes('supplies') && lowerVal.includes('office'))) {
+    return 'Office Supplies';
+  }
+  if (lowerVal.includes('materials') || (lowerVal.includes('supplies') && (lowerVal.includes('materials') || lowerVal.includes('supply')))) {
+    return 'Materials & Supplies';
+  }
+  if (lowerVal.includes('salary') || lowerVal.includes('wage') || lowerVal.includes('payroll') || lowerVal.includes('salaries')) {
+    return 'Salaries';
+  }
+  if (lowerVal.includes('permit') || lowerVal.includes('license') || lowerVal.includes('permits') || lowerVal.includes('licenses')) {
+    return 'Permit & License';
+  }
+  if (lowerVal.includes('customs') || lowerVal.includes('brokerage')) {
+    return "Customs & Brokerage Fee's";
+  }
+  if (lowerVal.includes('install') || lowerVal.includes('installation')) {
+    return 'Installation & Services';
+  }
+  if (lowerVal.includes('loss') || lowerVal.includes('damage') || lowerVal.includes('damaged')) {
+    return 'Loss & Damage Goods';
+  }
+  if (lowerVal.includes('fee') && lowerVal.includes('charge')) {
+    return "Fee's & Charges";
+  }
+
+  // 3. Normalized stripped match
+  const clean = (str) => {
+    return str
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '')
+      .replace(/and/g, '')
+      .replace(/s$/g, '')
+      .replace(/fee/g, '')
+      .replace(/charge/g, '');
+  };
+  const inputCleaned = clean(val);
+  const foundCleaned = expenseCategories.find(c => clean(c) === inputCleaned);
+  if (foundCleaned) return foundCleaned;
+
+  return 'Miscellaneous';
+}
+
+function parseExcelDate(cell, dateVal) {
+  if (!dateVal) return null;
+  if (cell && (cell.type === ExcelJS.ValueType.Date || cell.value instanceof Date)) {
+    try {
+      return cell.value.toISOString().slice(0, 10);
+    } catch (e) { /* ignore */ }
+  }
+  // Check if it is a serial number
+  const num = Number(dateVal);
+  if (!isNaN(num) && num > 30000 && num < 60000) {
+    try {
+      const date = new Date(Math.round((num - 25569) * 86400 * 1000));
+      if (!isNaN(date.getTime())) {
+        return date.toISOString().slice(0, 10);
+      }
+    } catch (e) { /* ignore */ }
+  }
+  try {
+    const parsed = new Date(dateVal);
+    if (!isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10);
+    }
+  } catch (e) { /* ignore */ }
+  return null;
 }
 
 function getWritableDatabasePath() {
@@ -539,8 +642,8 @@ function getDashboardSummary(db, { fromDate = '', toDate = '' } = {}) {
     .prepare(
       `
         SELECT
-          COALESCE(SUM(CASE WHEN date = ? AND status NOT IN ('FAILED', 'Return') THEN gross_amount ELSE 0 END), 0) AS sales_today,
-          COALESCE(SUM(CASE WHEN date >= ? AND date <= ? AND status NOT IN ('FAILED', 'Return') THEN gross_amount ELSE 0 END), 0) AS sales_period,
+          COALESCE(SUM(CASE WHEN date = ? AND status NOT IN ('FAILED', 'Return') THEN gross_amount - output_vat ELSE 0 END), 0) AS sales_today,
+          COALESCE(SUM(CASE WHEN date >= ? AND date <= ? AND status NOT IN ('FAILED', 'Return') THEN gross_amount - output_vat ELSE 0 END), 0) AS sales_period,
           COALESCE(SUM(CASE WHEN date >= ? AND date <= ? AND status NOT IN ('FAILED', 'Return') THEN profit ELSE 0 END), 0) AS profit_period,
           COALESCE(SUM(CASE WHEN date >= ? AND date <= ? AND status NOT IN ('FAILED', 'Return') THEN output_vat ELSE 0 END), 0) AS output_vat_period,
           COALESCE(SUM(CASE WHEN date >= ? AND date <= ? AND status NOT IN ('FAILED', 'Return') THEN vat_exempt_amount ELSE 0 END), 0) AS vat_exempt_sales,
@@ -1492,7 +1595,7 @@ function upsertPurchase(db, payload = {}) {
   const address = cleanString(payload.address);
   const grossAmount = roundMoney(payload.gross_amount ?? payload.grossAmount);
   const isVatExempt = asBoolean(payload.is_vat_exempt ?? payload.isVatExempt);
-  const expenseCategory = cleanString(payload.expense_category ?? payload.expenseCategory) || expenseCategories.at(-1);
+  const expenseCategory = normalizeExpenseCategory(payload.expense_category ?? payload.expenseCategory);
   const remarks = cleanString(payload.remarks);
   const { vatRate } = getTaxSettings(db);
   const vat = calculatePurchaseLine({ grossAmount, isVatExempt, vatRate });
@@ -1505,10 +1608,10 @@ function upsertPurchase(db, payload = {}) {
     throw new Error('Receipt number is required.');
   }
 
-    const tx = db.transaction(() => {
-        // 1. Save Header
-        db.prepare(
-            `
+  const tx = db.transaction(() => {
+    // 1. Save Header
+    db.prepare(
+      `
             INSERT INTO purchases (
                 id, company_name, date, supplier_tin, supplier_name, receipt_number, address,
                 gross_amount, net_of_vat, input_vat, output_vat, is_vat_exempt, expense_category, remarks,
@@ -1535,91 +1638,91 @@ function upsertPurchase(db, payload = {}) {
                 remarks = excluded.remarks,
                 updated_at = excluded.updated_at
             `
-        ).run({
-            id,
-            company_name: companyName,
-            date,
-            supplier_tin: supplierTin,
-            supplier_name: supplierName,
-            receipt_number: receiptNumber,
-            address,
-            gross_amount: vat.grossAmount,
-            net_of_vat: vat.netOfVat,
-            input_vat: vat.inputVat,
-            output_vat: vat.outputVat,
-            is_vat_exempt: isVatExempt ? 1 : 0,
-            expense_category: expenseCategory,
-            remarks,
-            created_at: stamp,
-            updated_at: stamp
-        });
+    ).run({
+      id,
+      company_name: companyName,
+      date,
+      supplier_tin: supplierTin,
+      supplier_name: supplierName,
+      receipt_number: receiptNumber,
+      address,
+      gross_amount: vat.grossAmount,
+      net_of_vat: vat.netOfVat,
+      input_vat: vat.inputVat,
+      output_vat: vat.outputVat,
+      is_vat_exempt: isVatExempt ? 1 : 0,
+      expense_category: expenseCategory,
+      remarks,
+      created_at: stamp,
+      updated_at: stamp
+    });
 
-        // 2. Clear previous items and inventory impacts if this is an update
-        // Note: For now we don't have a full revertPurchaseInventory but we should at least clear items
-        db.prepare('DELETE FROM purchase_items WHERE purchase_id = ?').run(id);
-        // We also want to delete movements to avoid duplicates if re-saving
-        db.prepare("DELETE FROM inventory_movements WHERE reference_type = 'PURCHASE' AND reference_id = ?").run(id);
-        
-        db.prepare("DELETE FROM batches WHERE batch_number = ?").run(`PURCHASE-${id}`);
-        if (receiptNumber) {
-            db.prepare("DELETE FROM batches WHERE batch_number = ?").run(`PURCHASE-${receiptNumber}`);
-        }
+    // 2. Clear previous items and inventory impacts if this is an update
+    // Note: For now we don't have a full revertPurchaseInventory but we should at least clear items
+    db.prepare('DELETE FROM purchase_items WHERE purchase_id = ?').run(id);
+    // We also want to delete movements to avoid duplicates if re-saving
+    db.prepare("DELETE FROM inventory_movements WHERE reference_type = 'PURCHASE' AND reference_id = ?").run(id);
 
-        // 3. Process items
-        if (expenseCategory === 'Materials & Supplies' && Array.isArray(payload.items)) {
-            const insertItem = db.prepare(`
+    db.prepare("DELETE FROM batches WHERE batch_number = ?").run(`PURCHASE-${id}`);
+    if (receiptNumber) {
+      db.prepare("DELETE FROM batches WHERE batch_number = ?").run(`PURCHASE-${receiptNumber}`);
+    }
+
+    // 3. Process items
+    if (expenseCategory === 'Materials & Supplies' && Array.isArray(payload.items)) {
+      const insertItem = db.prepare(`
                 INSERT INTO purchase_items (
                     id, purchase_id, product_id, qty, unit, unit_cost, srp, gross_amount, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
 
-            for (const item of payload.items) {
-                const productId = cleanString(item.product_id);
-                const qty = roundMoney(item.quantity);
-                const unitCost = roundMoney(item.unit_cost);
-                const srp = roundMoney(item.srp);
-                const itemGross = roundMoney(item.gross_amount);
+      for (const item of payload.items) {
+        const productId = cleanString(item.product_id);
+        const qty = roundMoney(item.quantity);
+        const unitCost = roundMoney(item.unit_cost);
+        const srp = roundMoney(item.srp);
+        const itemGross = roundMoney(item.gross_amount);
 
-                if (productId && qty > 0) {
-                    // Save to purchase_items
-                    insertItem.run(createId(), id, productId, qty, cleanString(item.unit) || 'pc', unitCost, srp, itemGross, stamp);
+        if (productId && qty > 0) {
+          // Save to purchase_items
+          insertItem.run(createId(), id, productId, qty, cleanString(item.unit) || 'pc', unitCost, srp, itemGross, stamp);
 
-                    // Create batch for inventory
-                    createBatch(db, {
-                        productId,
-                        batchNumber: `PURCHASE-${id}`,
-                        date,
-                        unitCost,
-                        srp,
-                        remainingQty: qty,
-                        unit: cleanString(item.unit) || 'pc'
-                    });
+          // Create batch for inventory
+          createBatch(db, {
+            productId,
+            batchNumber: `PURCHASE-${id}`,
+            date,
+            unitCost,
+            srp,
+            remainingQty: qty,
+            unit: cleanString(item.unit) || 'pc'
+          });
 
-                    // Update product's latest cost/srp
-                    db.prepare(`
+          // Update product's latest cost/srp
+          db.prepare(`
                         UPDATE products 
                         SET cost = ?, srp = ?, updated_at = ?
                         WHERE id = ?
                     `).run(unitCost, srp, stamp, productId);
 
-                    // Record movement
-                    db.prepare(`
+          // Record movement
+          db.prepare(`
                         INSERT INTO inventory_movements (
                             id, product_id, reference_type, reference_id, date, movement_type,
                             qty_in, qty_out, note, created_at
                         )
                         VALUES (?, ?, 'PURCHASE', ?, ?, 'IN', ?, 0, ?, ?)
                     `).run(
-                        createId(), productId, id, date, qty,
-                        `Purchased ${qty} from ${supplierName} (Receipt: ${receiptNumber})`, stamp
-                    );
-                }
-            }
+            createId(), productId, id, date, qty,
+            `Purchased ${qty} from ${supplierName} (Receipt: ${receiptNumber})`, stamp
+          );
         }
-    });
-    tx();
+      }
+    }
+  });
+  tx();
 
-    return getPurchaseById(db, id);
+  return getPurchaseById(db, id);
 }
 
 function deletePurchase(db, id) {
@@ -1634,14 +1737,14 @@ function deletePurchase(db, id) {
   const tx = db.transaction(() => {
     db.prepare("DELETE FROM batches WHERE batch_number = ?").run(`PURCHASE-${purchaseId}`);
     if (purchase.receipt_number) {
-        db.prepare("DELETE FROM batches WHERE batch_number = ?").run(`PURCHASE-${purchase.receipt_number}`);
+      db.prepare("DELETE FROM batches WHERE batch_number = ?").run(`PURCHASE-${purchase.receipt_number}`);
     }
-    
+
     db.prepare('DELETE FROM purchase_items WHERE purchase_id = ?').run(purchaseId);
     db.prepare("DELETE FROM inventory_movements WHERE reference_type = 'PURCHASE' AND reference_id = ?").run(purchaseId);
     db.prepare('DELETE FROM purchases WHERE id = ?').run(purchaseId);
   });
-  
+
   tx();
   return true;
 }
@@ -3016,7 +3119,10 @@ async function analyzeExcelFile(filePath) {
       if (rowStr.includes('PRODUCT') && rowStr.includes('DATE')) {
         sheetType = 'SALES';
         break;
-      } else if (rowStr.includes('SUPPLIER') && (rowStr.includes('CATEGORY') || rowStr.includes('GROSS AMOUNT'))) {
+      } else if (
+        (rowStr.includes('SUPPLIER') && (rowStr.includes('CATEGORY') || rowStr.includes('GROSS AMOUNT'))) ||
+        ((rowStr.includes('NAME/TRADE NAME') || rowStr.includes('NAME/TRADENAME') || rowStr.includes('NAME / TRADE NAME') || rowStr.includes('TAX IDENTIFICATION NUMBER') || rowStr.includes('TAXIDENTIFICATIONNUMBER') || rowStr.includes('VOUCHER #') || rowStr.includes('VOUCHER#')) && (rowStr.includes('GROSS AMOUNT') || rowStr.includes('GROSSAMOUNT')))
+      ) {
         sheetType = 'PURCHASES';
         break;
       } else if (rowStr.includes('CODE') && rowStr.includes('STOCK')) {
@@ -3079,7 +3185,10 @@ async function importFullReportFromExcel(db, filePath, selectedSheetNames = null
           headerRowNumber = i;
           sheetType = 'SALES';
           break;
-        } else if (rowStr.includes('SUPPLIER') && (rowStr.includes('CATEGORY') || rowStr.includes('GROSS AMOUNT'))) {
+        } else if (
+          (rowStr.includes('SUPPLIER') && (rowStr.includes('CATEGORY') || rowStr.includes('GROSS AMOUNT'))) ||
+          ((rowStr.includes('NAME/TRADE NAME') || rowStr.includes('NAME/TRADENAME') || rowStr.includes('NAME / TRADE NAME') || rowStr.includes('TAX IDENTIFICATION NUMBER') || rowStr.includes('TAXIDENTIFICATIONNUMBER') || rowStr.includes('VOUCHER #') || rowStr.includes('VOUCHER#')) && (rowStr.includes('GROSS AMOUNT') || rowStr.includes('GROSSAMOUNT')))
+        ) {
           headers = rowVals;
           headerRowNumber = i;
           sheetType = 'PURCHASES';
@@ -3116,18 +3225,30 @@ async function importFullReportFromExcel(db, filePath, selectedSheetNames = null
       sheet.eachRow((row, rowNumber) => {
         if (rowNumber <= headerRowNumber) return;
 
-        const getVal = (name) => {
-          const colIdx = headers.indexOf(name);
-          if (colIdx === -1) return '';
-          const cell = row.getCell(colIdx);
-          if (!cell || cell.value === null || cell.value === undefined) return '';
-          let val = cell.value;
-          if (val && typeof val === 'object') {
-            if (val.result !== undefined) val = val.result;
-            else if (val.richText !== undefined) val = val.richText.map(rt => rt.text).join('');
+        const getValByKeys = (keys) => {
+          for (const k of keys) {
+            const cleanK = k.toUpperCase().replace(/[^A-Z0-9]/g, '');
+            const colIdx = headers.findIndex(h => {
+              if (!h) return false;
+              return h.toUpperCase().replace(/[^A-Z0-9]/g, '') === cleanK;
+            });
+            if (colIdx !== -1) {
+              const cell = row.getCell(colIdx);
+              if (!cell || cell.value === null || cell.value === undefined) continue;
+              let val = cell.value;
+              if (val && typeof val === 'object') {
+                if (val.result !== undefined) val = val.result;
+                else if (val.richText !== undefined) val = val.richText.map(rt => rt.text).join('');
+              }
+              if (typeof val === 'string') return val.replace(/[₱,]/g, '').trim();
+              return val.toString();
+            }
           }
-          if (typeof val === 'string') return val.replace(/[₱,]/g, '').trim();
-          return val.toString();
+          return '';
+        };
+
+        const getVal = (name) => {
+          return getValByKeys([name]);
         };
 
         if (sheetType === 'CUSTOMERS') {
@@ -3157,24 +3278,18 @@ async function importFullReportFromExcel(db, filePath, selectedSheetNames = null
         }
 
         if (sheetType === 'SALES') {
-          const dateVal = getVal('DATE');
-          const product = getVal('PRODUCT');
-          let customer = getVal('CUSTOMER') || 'Walk-in'; // Default to Walk-in
+          const dateVal = getValByKeys(['DATE']);
+          const product = getValByKeys(['PRODUCT']);
+          let customer = getValByKeys(['CUSTOMER', 'NAME/TRADE NAME', 'NAME/TRADENAME', 'NAME']) || 'Walk-in';
 
           if (!dateVal || !product || dateVal === 'SALES' || dateVal === 'TOTAL COST') {
             return;
           }
 
-          let date;
-          try {
-            const cell = row.getCell(headers.indexOf('DATE'));
-            if (cell.type === ExcelJS.ValueType.Date) date = cell.value.toISOString().slice(0, 10);
-            else {
-              const parsed = new Date(dateVal);
-              if (isNaN(parsed.getTime())) return;
-              date = parsed.toISOString().slice(0, 10);
-            }
-          } catch (e) { return; }
+          const dateColIdx = headers.findIndex(h => h && h.toUpperCase().replace(/[^A-Z0-9]/g, '') === 'DATE');
+          const cell = dateColIdx !== -1 ? row.getCell(dateColIdx) : null;
+          const date = parseExcelDate(cell, dateVal);
+          if (!date) return;
 
           // Get/Create Customer
           let customerId;
@@ -3185,19 +3300,19 @@ async function importFullReportFromExcel(db, filePath, selectedSheetNames = null
             db.prepare('INSERT INTO customers (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)').run(customerId, customer, nowIso(), nowIso());
           }
 
-          const siNumber = getVal('SI NO.');
-          const qty = parseFloat(getVal('QTY')) || 0;
-          const unit = getVal('UNIT');
-          const price = parseFloat(getVal('UNIT PRICE')) || 0;
-          const remarks = getVal('REMARKS') || 'PAID';
-          const channel = getVal('INVOICE') || 'WALK IN';
-          const receiptNumberRaw = getVal('RECEIPT #');
+          const siNumber = getValByKeys(['SI NO.', 'SI_NO', 'SI NO', 'SI']);
+          const qty = parseFloat(getValByKeys(['QTY', 'QUANTITY'])) || 0;
+          const unit = getValByKeys(['UNIT']);
+          const price = parseFloat(getValByKeys(['UNIT PRICE', 'UNITPRICE', 'PRICE'])) || 0;
+          const remarks = getValByKeys(['REMARKS', 'STATUS']) || 'PAID';
+          const channel = getValByKeys(['INVOICE', 'CHANNEL']) || 'WALK IN';
+          const receiptNumberRaw = getValByKeys(['RECEIPT #', 'RECEIPT#', 'RECEIPT']);
           const receiptNumberVal = receiptNumberRaw ? parseInt(receiptNumberRaw, 10) : null;
 
           // Read Costing and Profit from Excel
-          const costing = parseFloat(getVal('COSTING')) || 0;
-          const totalCost = parseFloat(getVal('TOTAL COST')) || 0;
-          const rowProfit = parseFloat(getVal('PROFIT')) || 0;
+          const costing = parseFloat(getValByKeys(['COSTING', 'UNIT COST'])) || 0;
+          const totalCost = parseFloat(getValByKeys(['TOTAL COST', 'TOTALCOST', 'COST'])) || 0;
+          const rowProfit = parseFloat(getValByKeys(['PROFIT'])) || 0;
 
           // Get/Create Product
           let productId;
@@ -3209,8 +3324,8 @@ async function importFullReportFromExcel(db, filePath, selectedSheetNames = null
             db.prepare('INSERT INTO products (id, code, name, category, unit, cost, average_cost, srp, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(productId, code, product, 'Imported', unit || 'pc', costing, costing, price, nowIso(), nowIso());
           }
 
-          const isVatExempt = asBoolean(getVal('VAT EXEMPT SALES'));
-          const company = normalizeCompany(getVal('COMPANY'));
+          const isVatExempt = asBoolean(getValByKeys(['VAT EXEMPT SALES', 'VAT EXEMPT SALES ', 'VATEXEMPT']));
+          const company = normalizeCompany(getValByKeys(['COMPANY']));
 
           const vat = calculateSaleLine({ qty, unitPrice: price, isVatExempt, vatRate });
 
@@ -3233,42 +3348,111 @@ async function importFullReportFromExcel(db, filePath, selectedSheetNames = null
           salesImported++;
         }
         else if (sheetType === 'PURCHASES') {
-          const dateVal = getVal('DATE');
-          let supplier = getVal('SUPPLIER') || 'Miscellaneous';
-          const category = getVal('CATEGORY');
-          const company = normalizeCompany(getVal('COMPANY'));
+          const dateVal = getValByKeys(['DATE']);
+          let supplier = getValByKeys(['SUPPLIER', 'NAME/TRADE NAME', 'NAME/TRADENAME', 'COMPANY']) || 'Miscellaneous';
+          const categoryVal = getValByKeys(['CATEGORY']);
+          const company = normalizeCompany(getValByKeys(['COMPANY']));
 
-          if (!dateVal || (!category && !getVal('GROSS AMOUNT')) || dateVal === 'DATE') return;
+          if (!dateVal || dateVal === 'DATE') return;
 
-          let date;
-          try {
-            const parsed = new Date(dateVal);
-            if (!isNaN(parsed.getTime())) date = parsed.toISOString().slice(0, 10);
-            else return;
-          } catch (e) { return; }
+          const dateColIdx = headers.findIndex(h => h && h.toUpperCase().replace(/[^A-Z0-9]/g, '') === 'DATE');
+          const cell = dateColIdx !== -1 ? row.getCell(dateColIdx) : null;
+          const date = parseExcelDate(cell, dateVal);
+          if (!date) return;
 
-          const receipt = getVal('RECEIPT #');
-          const tin = getVal('TIN');
-          const address = getVal('ADDRESS');
-          const remarks = getVal('REMARKS');
-          const grossAmount = parseFloat(getVal('GROSS AMOUNT')) || 0;
-          const isVatExempt = asBoolean(getVal('IS VAT EXEMPT'));
-          
-          const vat = calculatePurchaseLine({ grossAmount, isVatExempt, vatRate });
+          const receipt = getValByKeys(['RECEIPT #', 'RECEIPT#', 'RECEIPT']);
+          const tin = getValByKeys(['TAX IDENTIFICATION NUMBER', 'TAXIDENTIFICATIONNUMBER', 'TIN']);
+          const address = getValByKeys(['ADDRESS']);
+          const remarks = getValByKeys(['REMARKS']) || 'PAID';
+          const isVatExempt = asBoolean(getValByKeys(['IS VAT EXEMPT', 'ISVATEXEMPT']));
 
-          db.prepare(`
-            INSERT INTO purchases (
-              id, date, company_name, supplier_tin, supplier_name, receipt_number, address, 
-              expense_category, gross_amount, net_of_vat, input_vat, output_vat, is_vat_exempt, 
-              remarks, created_at, updated_at
-            ) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `).run(
-            createId(), date, company, tin || '', supplier, receipt || '', address || '', 
-            category || 'Miscellaneous', vat.grossAmount, vat.netOfVat, vat.inputVat, 
-            vat.outputVat, isVatExempt ? 1 : 0, remarks || '', nowIso(), nowIso()
-          );
-          purchasesImported++;
+          // Check if there are separate columns for each category (multi-column layout)
+          const categoryColIndices = [];
+          headers.forEach((h, idx) => {
+            if (!h || idx === 0) return;
+            const normalized = normalizeExpenseCategory(h);
+            const cleanH = h.toUpperCase().trim();
+            if (
+              normalized !== 'Miscellaneous' ||
+              cleanH === 'OTHERS' ||
+              cleanH === 'MISCELLENIOUS' ||
+              cleanH === 'MISCELLANEOUS'
+            ) {
+              categoryColIndices.push({
+                index: idx,
+                categoryName: normalized === 'Miscellaneous' ? 'Miscellaneous' : normalized
+              });
+            }
+          });
+
+          if (categoryColIndices.length > 0 && !categoryVal) {
+            let parsedAny = false;
+            for (const catCol of categoryColIndices) {
+              const cellVal = row.getCell(catCol.index).value;
+              let val = 0;
+              if (cellVal && typeof cellVal === 'object') {
+                if (cellVal.result !== undefined) val = parseFloat(cellVal.result) || 0;
+              } else if (cellVal !== null && cellVal !== undefined) {
+                val = parseFloat(cellVal.toString().replace(/[₱,]/g, '')) || 0;
+              }
+
+              if (val > 0) {
+                const vat = calculatePurchaseLine({ grossAmount: val, isVatExempt, vatRate });
+                db.prepare(`
+                  INSERT INTO purchases (
+                    id, date, company_name, supplier_tin, supplier_name, receipt_number, address, 
+                    expense_category, gross_amount, net_of_vat, input_vat, output_vat, is_vat_exempt, 
+                    remarks, created_at, updated_at
+                  ) 
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `).run(
+                  createId(), date, company, tin || '', supplier, receipt || '', address || '',
+                  catCol.categoryName, vat.grossAmount, vat.netOfVat, vat.inputVat, 0, isVatExempt ? 1 : 0,
+                  remarks, nowIso(), nowIso()
+                );
+                purchasesImported++;
+                parsedAny = true;
+              }
+            }
+
+            if (!parsedAny) {
+              const grossAmount = parseFloat(getValByKeys(['GROSS AMOUNT', 'GROSSAMOUNT'])) || 0;
+              if (grossAmount > 0) {
+                const vat = calculatePurchaseLine({ grossAmount, isVatExempt, vatRate });
+                db.prepare(`
+                  INSERT INTO purchases (
+                    id, date, company_name, supplier_tin, supplier_name, receipt_number, address, 
+                    expense_category, gross_amount, net_of_vat, input_vat, output_vat, is_vat_exempt, 
+                    remarks, created_at, updated_at
+                  ) 
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `).run(
+                  createId(), date, company, tin || '', supplier, receipt || '', address || '',
+                  'Miscellaneous', vat.grossAmount, vat.netOfVat, vat.inputVat, 0, isVatExempt ? 1 : 0,
+                  remarks, nowIso(), nowIso()
+                );
+                purchasesImported++;
+              }
+            }
+          } else {
+            const grossAmount = parseFloat(getValByKeys(['GROSS AMOUNT', 'GROSSAMOUNT'])) || 0;
+            const category = normalizeExpenseCategory(categoryVal || 'Miscellaneous');
+            const vat = calculatePurchaseLine({ grossAmount, isVatExempt, vatRate });
+
+            db.prepare(`
+              INSERT INTO purchases (
+                id, date, company_name, supplier_tin, supplier_name, receipt_number, address, 
+                expense_category, gross_amount, net_of_vat, input_vat, output_vat, is_vat_exempt, 
+                remarks, created_at, updated_at
+              ) 
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              createId(), date, company, tin || '', supplier, receipt || '', address || '',
+              category, vat.grossAmount, vat.netOfVat, vat.inputVat, 0, isVatExempt ? 1 : 0,
+              remarks, nowIso(), nowIso()
+            );
+            purchasesImported++;
+          }
         }
         else if (sheetType === 'INVENTORY') {
           const name = getVal('NAME');
@@ -3380,6 +3564,30 @@ function getLookups() {
 export function createRepository() {
   const db = openDatabase();
   const dbPath = getWritableDatabasePath();
+
+  // Diagnostics: Auto-dump the excel sheet structure for review
+  try {
+    const workbook = new ExcelJS.Workbook();
+    workbook.xlsx.readFile('example xl/example.xlsx').then(() => {
+      let log = '';
+      log += `Sheets in workbook: ${workbook.worksheets.map(w => w.name).join(', ')}\n\n`;
+      workbook.worksheets.forEach(worksheet => {
+        log += `=== Worksheet: ${worksheet.name} (Rows: ${worksheet.rowCount}, Cols: ${worksheet.columnCount}) ===\n`;
+        worksheet.eachRow({ includeEmpty: true }, (row, rowNumber) => {
+          if (rowNumber <= 110) { // Read more rows to capture financial statement details fully
+            const values = Array.isArray(row.values) ? row.values.slice(1) : [];
+            log += `${rowNumber}: ${JSON.stringify(values)}\n`;
+          }
+        });
+        log += '\n';
+      });
+      fs.writeFileSync('scratch/excel-dump.txt', log, 'utf8');
+    }).catch(err => {
+      fs.writeFileSync('scratch/excel-error.txt', err.stack || err.message, 'utf8');
+    });
+  } catch (err) {
+    fs.writeFileSync('scratch/excel-error.txt', err.stack || err.message, 'utf8');
+  }
 
   return {
     dbPath,

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import logo from './assets/logo.png';
+import QRCode from 'qrcode';
 import {
     calculatePurchaseLine,
     calculateSaleLine,
@@ -344,7 +345,7 @@ function PurchaseItemRow({ item, index, products, onUpdate, onRemove, onUploadPh
                                     </label>
                                     {item.photo_path ? (
                                         <div className="photo-preview" style={{ marginTop: '8px', maxWidth: '80px', maxHeight: '80px' }}>
-                                            <img src={`file://${item.photo_path}`} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '4px' }} />
+                                            <img src={window.agriLedger.sync.resolvePhotoUrl(item.photo_path)} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '4px' }} />
                                         </div>
                                     ) : (
                                         <span className="muted" style={{ fontSize: '0.7rem', marginLeft: '8px' }}>No image selected</span>
@@ -507,9 +508,9 @@ function SupplierSearchSelect({ suppliers, value, onChange, onCreateNew, placeho
                             </div>
                         )}
                         {searchTrimmed !== '' && !canQuickAdd && !filtered.some(s => s.name === searchTrimmed) && (
-                           <div className="search-select-item" onClick={() => handleSelect(null)}>
-                               <span>Use custom name: <strong>"{searchTrimmed}"</strong></span>
-                           </div>
+                            <div className="search-select-item" onClick={() => handleSelect(null)}>
+                                <span>Use custom name: <strong>"{searchTrimmed}"</strong></span>
+                            </div>
                         )}
                     </div>
                 </div>
@@ -1996,7 +1997,7 @@ function ProductsTab({
                                         </label>
                                         {form.photo_path ? (
                                             <div className="photo-preview">
-                                                <img src={`file://${form.photo_path}`} alt="Preview" />
+                                                <img src={window.agriLedger.sync.resolvePhotoUrl(form.photo_path)} alt="Preview" />
                                             </div>
                                         ) : (
                                             <span className="muted">No image selected yet</span>
@@ -2145,7 +2146,7 @@ function ProductsTab({
                                     {product.photoPath ? (
                                         <img
                                             className="product-card-image"
-                                            src={`file://${product.photoPath}`}
+                                            src={window.agriLedger.sync.resolvePhotoUrl(product.photoPath)}
                                             alt={product.name}
                                         />
                                     ) : (
@@ -2826,6 +2827,15 @@ function SalesTab({
             let aValue = a[sortConfig.key];
             let bValue = b[sortConfig.key];
 
+            if (sortConfig.key === 'productName') {
+                aValue = Array.isArray(a.items) && a.items.length > 0
+                    ? a.items.map(item => item.name || '').filter(Boolean).join(', ')
+                    : '';
+                bValue = Array.isArray(b.items) && b.items.length > 0
+                    ? b.items.map(item => item.name || '').filter(Boolean).join(', ')
+                    : '';
+            }
+
             if (sortConfig.key === 'customerName') {
                 aValue = aValue || 'Walk-in';
                 bValue = bValue || 'Walk-in';
@@ -3275,7 +3285,7 @@ function SalesTab({
                                                     {line.photoPath ? (
                                                         <img
                                                             className="sale-line-thumb"
-                                                            src={`file://${line.photoPath}`}
+                                                            src={window.agriLedger.sync.resolvePhotoUrl(line.photoPath)}
                                                             alt={line.productName}
                                                         />
                                                     ) : null}
@@ -3318,6 +3328,7 @@ function SalesTab({
                     >
                         <option value="date">Sort by Date</option>
                         <option value="receiptNumber">Sort by Receipt #</option>
+                        <option value="productName">Sort by Product</option>
                         <option value="grossAmount">Sort by Gross</option>
                         <option value="outputVat">Sort by Output VAT</option>
                         <option value="inputVat">Sort by Input VAT</option>
@@ -3853,6 +3864,15 @@ function PurchasesTab({
             let aValue = a[sortConfig.key];
             let bValue = b[sortConfig.key];
 
+            if (sortConfig.key === 'productName') {
+                aValue = Array.isArray(a.items) && a.items.length > 0
+                    ? a.items.map(item => item.productName || '').filter(Boolean).join(', ')
+                    : '';
+                bValue = Array.isArray(b.items) && b.items.length > 0
+                    ? b.items.map(item => item.productName || '').filter(Boolean).join(', ')
+                    : '';
+            }
+
             if (['gross_amount', 'net_of_vat', 'input_vat', 'grossAmount', 'netOfVat', 'inputVat'].includes(sortConfig.key)) {
                 const numA = Number(aValue) || 0;
                 const numB = Number(bValue) || 0;
@@ -4120,6 +4140,7 @@ function PurchasesTab({
                     >
                         <option value="date">Sort by Date</option>
                         <option value="receiptNumber">Sort by Receipt #</option>
+                        <option value="productName">Sort by Product</option>
                         <option value="grossAmount">Sort by Gross</option>
                         <option value="supplierName">Sort by Supplier</option>
                         <option value="expenseCategory">Sort by Category</option>
@@ -4267,15 +4288,51 @@ function PurchasesTab({
                                             }}
                                         />
                                     </th>
-                                    <th>DATE</th>
-                                    <th>COMPANY</th>
-                                    <th>SUPPLIER</th>
-                                    <th>RECEIPT #</th>
-                                    <th>PRODUCT NAME</th>
-                                    <th>CATEGORY</th>
-                                    <th className="numeric">GROSS AMOUNT</th>
-                                    <th className="numeric">NET OF VAT</th>
-                                    <th className="numeric">INPUT VAT</th>
+                                    <th onClick={() => handleSort('date')} className="sortable-header">
+                                        <div className="header-sort-content">
+                                            DATE {sortConfig.key === 'date' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                                        </div>
+                                    </th>
+                                    <th onClick={() => handleSort('companyName')} className="sortable-header">
+                                        <div className="header-sort-content">
+                                            COMPANY {sortConfig.key === 'companyName' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                                        </div>
+                                    </th>
+                                    <th onClick={() => handleSort('supplierName')} className="sortable-header">
+                                        <div className="header-sort-content">
+                                            SUPPLIER {sortConfig.key === 'supplierName' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                                        </div>
+                                    </th>
+                                    <th onClick={() => handleSort('receiptNumber')} className="sortable-header">
+                                        <div className="header-sort-content">
+                                            RECEIPT # {sortConfig.key === 'receiptNumber' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                                        </div>
+                                    </th>
+                                    <th onClick={() => handleSort('productName')} className="sortable-header">
+                                        <div className="header-sort-content">
+                                            PRODUCT NAME {sortConfig.key === 'productName' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                                        </div>
+                                    </th>
+                                    <th onClick={() => handleSort('expenseCategory')} className="sortable-header">
+                                        <div className="header-sort-content">
+                                            CATEGORY {sortConfig.key === 'expenseCategory' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                                        </div>
+                                    </th>
+                                    <th onClick={() => handleSort('grossAmount')} className="sortable-header numeric">
+                                        <div className="header-sort-content numeric">
+                                            GROSS AMOUNT {sortConfig.key === 'grossAmount' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                                        </div>
+                                    </th>
+                                    <th onClick={() => handleSort('netOfVat')} className="sortable-header numeric">
+                                        <div className="header-sort-content numeric">
+                                            NET OF VAT {sortConfig.key === 'netOfVat' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                                        </div>
+                                    </th>
+                                    <th onClick={() => handleSort('inputVat')} className="sortable-header numeric">
+                                        <div className="header-sort-content numeric">
+                                            INPUT VAT {sortConfig.key === 'inputVat' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                                        </div>
+                                    </th>
 
                                 </tr>
                             </thead>
@@ -4530,13 +4587,37 @@ function SettingsTab({
     taxSettings,
     onSaveTaxSettings,
     onExportFull,
-    onImportFull
+    onImportFull,
+    serverInfo,
+    connectionStatus,
+    remoteHostUrl,
+    setRemoteHostUrl,
+    onToggleServer,
+    onConnectRemote,
+    onDisconnectRemote
 }) {
     const [taxForm, setTaxForm] = useState(() => ({
         vatRate: String(roundMoney((taxSettings?.vatRate ?? defaultTaxSettings.vatRate) * 100)),
         incomeTaxRate: String(roundMoney((taxSettings?.incomeTaxRate ?? defaultTaxSettings.incomeTaxRate) * 100))
     }));
     const [savingTax, setSavingTax] = useState(false);
+    const [qrCodeUrl, setQrCodeUrl] = useState('');
+
+    useEffect(() => {
+        if (serverInfo.running && serverInfo.ip) {
+            const url = `http://${serverInfo.ip}:${serverInfo.port}`;
+            QRCode.toDataURL(url, { width: 256, margin: 2 }, (err, dataUrl) => {
+                if (err) {
+                    console.error('Failed to generate QR code:', err);
+                    setQrCodeUrl(`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(url)}`);
+                } else {
+                    setQrCodeUrl(dataUrl);
+                }
+            });
+        } else {
+            setQrCodeUrl('');
+        }
+    }, [serverInfo]);
 
     useEffect(() => {
         setTaxForm({
@@ -4614,6 +4695,175 @@ function SettingsTab({
                         </div>
                     </details>
 
+                    <details className="settings-accordion-card">
+                        <summary>
+                            <span>Mobile Connection & Local Cloud</span>
+                            <b aria-hidden="true">v</b>
+                        </summary>
+                        <div className="settings-accordion-body single">
+                            <div className="stack" style={{ gap: '1.5rem' }}>
+                                {/* Local Cloud Server Info */}
+                                <div className="stack" style={{ gap: '1rem', padding: '1.5rem', background: 'rgba(0,0,0,0.02)', border: '1px solid var(--border)', borderRadius: '12px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <div className="stack" style={{ gap: '2px' }}>
+                                            <strong style={{ fontSize: '0.95rem', color: 'var(--primary-strong)' }}>LOCAL PRIVATE CLOUD SERVER</strong>
+                                            <span className="muted" style={{ fontSize: '0.8rem' }}>
+                                                Serve inventory, catalog, and sales to other devices on your shop's WiFi network.
+                                            </span>
+                                        </div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            {serverInfo.running && (
+                                                <span className="pulse-dot" style={{
+                                                    width: '8px',
+                                                    height: '8px',
+                                                    borderRadius: '50%',
+                                                    background: '#2ecc71',
+                                                    boxShadow: '0 0 6px #2ecc71',
+                                                    display: 'inline-block'
+                                                }}></span>
+                                            )}
+                                            <Pill tone={serverInfo.running ? 'success' : 'neutral'}>
+                                                {serverInfo.running ? 'Running' : 'Stopped'}
+                                            </Pill>
+                                        </div>
+                                    </div>
+
+                                    {serverInfo.running && (
+                                        <div className="stack" style={{ gap: '16px', marginTop: '4px' }}>
+                                            {/* Link Row */}
+                                            <div style={{
+                                                display: 'flex',
+                                                flexWrap: 'wrap',
+                                                alignItems: 'center',
+                                                justifyContent: 'space-between',
+                                                gap: '12px',
+                                                padding: '12px',
+                                                background: 'var(--bg)',
+                                                border: '1px solid var(--border)',
+                                                borderRadius: '8px'
+                                            }}>
+                                                <div className="stack" style={{ gap: '2px' }}>
+                                                    <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Shop Connection Link</span>
+                                                    <code style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--primary-strong)' }}>
+                                                        {`http://${serverInfo.ip}:${serverInfo.port}`}
+                                                    </code>
+                                                </div>
+                                                <button
+                                                    className="button secondary"
+                                                    type="button"
+                                                    onClick={() => {
+                                                        navigator.clipboard.writeText(`http://${serverInfo.ip}:${serverInfo.port}`);
+                                                        flash('Link copied to clipboard!', 'success');
+                                                    }}
+                                                    style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                                                >
+                                                    Copy Link
+                                                </button>
+                                            </div>
+
+                                            {/* QR Code Segment */}
+                                            {qrCodeUrl && (
+                                                <div style={{
+                                                    display: 'flex',
+                                                    flexDirection: 'column',
+                                                    alignItems: 'center',
+                                                    gap: '12px',
+                                                    padding: '16px',
+                                                    background: 'var(--bg)',
+                                                    border: '1px solid var(--border)',
+                                                    borderRadius: '8px',
+                                                    textAlign: 'center'
+                                                }}>
+                                                    <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--muted)' }}>
+                                                        📷 SCAN WITH MOBILE OR TABLET CAMERA
+                                                    </span>
+                                                    <div style={{
+                                                        padding: '12px',
+                                                        background: '#ffffff',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid var(--border)',
+                                                        boxShadow: 'var(--shadow-sm)',
+                                                        display: 'inline-flex'
+                                                    }}>
+                                                        <img src={qrCodeUrl} alt="Scan to connect" style={{ width: '160px', height: '160px', display: 'block' }} />
+                                                    </div>
+                                                    <p className="muted" style={{ fontSize: '0.78rem', maxWidth: '360px', margin: '0 auto', lineHeight: 1.4 }}>
+                                                        Open your phone's camera, scan the QR code, and click the link to start selling and updating stocks instantly!
+                                                    </p>
+                                                    <small className="muted" style={{ fontSize: '0.72rem' }}>
+                                                        Note: Your phone must be connected to the same local WiFi router.
+                                                    </small>
+                                                </div>
+                                            )}
+
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', borderTop: '1px solid var(--border)', paddingTop: '10px' }}>
+                                                <span>Active Remote Phones/Devices:</span>
+                                                <strong>{serverInfo.connectedClients || 0}</strong>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
+                                        <button
+                                            className={`button ${serverInfo.running ? 'secondary' : 'primary'}`}
+                                            type="button"
+                                            onClick={() => onToggleServer(!serverInfo.running)}
+                                        >
+                                            {serverInfo.running ? 'Stop Host Server' : 'Start Host Server'}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {/* Collapsed Advanced Remote Database Link Setup */}
+                                <details style={{ cursor: 'pointer', fontSize: '0.85rem' }}>
+                                    <summary className="muted" style={{ fontWeight: 600, padding: '4px 0' }}>
+                                        Advanced: Connect to another Host Computer
+                                    </summary>
+                                    <div className="stack" style={{ gap: '0.5rem', padding: '1rem', background: 'rgba(0,0,0,0.01)', border: '1px dashed var(--border)', borderRadius: '8px', marginTop: '8px', cursor: 'default' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <strong>Client Mode Status</strong>
+                                            <Pill tone={connectionStatus.connected ? 'accent' : 'neutral'}>
+                                                {connectionStatus.connected ? 'Linked' : 'Local Only'}
+                                            </Pill>
+                                        </div>
+                                        <p className="muted" style={{ fontSize: '0.78rem' }}>
+                                            Allows linking this secondary computer's database directly to your primary shop computer.
+                                        </p>
+
+                                        {!connectionStatus.connected ? (
+                                            <div className="stack" style={{ gap: '0.5rem', marginTop: '4px' }}>
+                                                <label className="field">
+                                                    <span>Primary Host IP Address (e.g. 192.168.1.7)</span>
+                                                    <input
+                                                        className="input"
+                                                        placeholder="Enter primary computer's IP"
+                                                        value={remoteHostUrl}
+                                                        onChange={(e) => setRemoteHostUrl(e.target.value)}
+                                                    />
+                                                </label>
+                                                <button className="button primary" type="button" onClick={onConnectRemote}>
+                                                    Connect to Primary PC
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <div className="stack" style={{ gap: '0.5rem', marginTop: '4px' }}>
+                                                <div style={{ padding: '0.75rem', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '4px', fontSize: '0.82rem' }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                                        <span>Linked to database:</span>
+                                                        <code style={{ fontWeight: 600, color: 'var(--accent)' }}>{connectionStatus.url}</code>
+                                                    </div>
+                                                </div>
+                                                <button className="button danger" type="button" onClick={onDisconnectRemote}>
+                                                    Disconnect & Use Local SQLite
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                </details>
+                            </div>
+                        </div>
+                    </details>
+
                 </div>
 
                 <div className="settings-section-title">
@@ -4648,67 +4898,132 @@ function SettingsTab({
 function ReceiptModal({ sale, onClose }) {
     if (!sale) return null;
 
+    const maxRows = 16;
+    const items = sale.items || [];
+    const rows = [];
+    for (let i = 0; i < maxRows; i++) {
+        rows.push(items[i] || null);
+    }
+
+    const formattedTotal = formatCurrency(sale.grossAmount);
 
     return (
         <div className="modal-backdrop" style={{ zIndex: 9999 }}>
             <div className="modal-box receipt-box">
-                <div className="receipt-header">
-                    <h2 className="receipt-company">{sale.companyName}</h2>
-                    <p className="receipt-subtitle">Official Receipt</p>
+                <div className="receipt-grid">
 
-                </div>
-
-                <div className="receipt-meta">
-                    <div>
-                        <span>SI Number:</span>
-                        <strong>{sale.siNumber || 'N/A'}</strong>
-                    </div>
-                    <div>
-                        <span>Receipt #:</span>
-                        <strong>{sale.receiptNumber ? String(sale.receiptNumber).padStart(5, '0') : 'N/A'}</strong>
-                    </div>
-                    <div>
-                        <span>Date:</span>
-                        <strong>{formatDateShort(sale.date)}</strong>
-                    </div>
-                    {sale.customerName && (
-                        <div>
-                            <span>Customer:</span>
-                            <strong>{sale.customerName}</strong>
+                    {/* LEFT PANE */}
+                    <div className="receipt-pane-left">
+                        <div className="receipt-header-left">
+                            <img src={logo} alt="Logo" className="receipt-logo" />
+                            <h2 className="receipt-company-title">BATANGAS DAIRY FARMTECH INC.</h2>
                         </div>
-                    )}
-                </div>
 
-                <div className="receipt-body">
-                    <table className="receipt-table">
-                        <thead>
-                            <tr>
-                                <th>Product</th>
-                                <th className="numeric">Qty</th>
-                                <th className="numeric">Amount</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {sale.items?.map((item, index) => (
-                                <tr key={index}>
-                                    <td>{item.productName}</td>
-                                    <td className="numeric">{formatQuantity(item.qty)} {item.unit}</td>
-                                    <td className="numeric">{formatCurrency(item.grossAmount)}</td>
+                        <div className="receipt-sold-to-box">
+                            <span className="receipt-box-label">SOLD TO:</span>
+                            <span className="receipt-box-value" title={sale.customerName || 'Walk-In Customer'}>
+                                {sale.customerName || 'Walk-In Customer'}
+                            </span>
+                        </div>
+
+                        <table className="receipt-table-left">
+                            <thead>
+                                <tr>
+                                    <th style={{ width: '20%' }}>QTY</th>
+                                    <th style={{ width: '20%' }}>UNIT</th>
+                                    <th style={{ width: '60%' }}>DESCRIPTION</th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                {rows.map((item, idx) => (
+                                    <tr key={idx}>
+                                        <td style={{ width: '20%', textAlign: 'center' }}>
+                                            {item ? formatQuantity(item.qty) : ''}
+                                        </td>
+                                        <td style={{ width: '20%', textAlign: 'center' }}>
+                                            {item ? item.unit : ''}
+                                        </td>
+                                        <td style={{
+                                            width: '60%',
+                                            whiteSpace: 'nowrap',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis'
+                                        }}>
+                                            {item ? item.productName : ''}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+
+                        <div className="receipt-footer-left">
+                            <div className="receipt-total-label-row">
+                                TOTAL
+                            </div>
+                            <div className="receipt-signature-row">
+                                <div className="receipt-sig-line"></div>
+                                <span className="receipt-sig-sub">CASHIER / AUTHORIZED PERSON</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* RIGHT PANE */}
+                    <div className="receipt-pane-right">
+                        <div className="receipt-header-right">
+                            <div className="receipt-invoice-title">INVOICE</div>
+                            <div className="receipt-meta-grid">
+                                <div className="receipt-meta-cell">
+                                    <span>DATE</span>
+                                    <strong>{formatDateShort(sale.date)}</strong>
+                                </div>
+                                <div className="receipt-meta-cell">
+                                    <span>INVOICE #</span>
+                                    <strong>{sale.receiptNumber ? String(sale.receiptNumber).padStart(5, '0') : 'N/A'}</strong>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="receipt-address-box">
+                            <span className="receipt-box-label">ADDRESS:</span>
+                            <span className="receipt-box-value" title={sale.customerAddress || '-'}>
+                                {sale.customerAddress || '-'}
+                            </span>
+                        </div>
+
+                        <table className="receipt-table-right">
+                            <thead>
+                                <tr>
+                                    <th style={{ width: '45%' }}>PRICE EACH</th>
+                                    <th style={{ width: '55%' }}>AMOUNT</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {rows.map((item, idx) => (
+                                    <tr key={idx}>
+                                        <td style={{ width: '45%', textAlign: 'right' }}>
+                                            {item ? new Intl.NumberFormat('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(item.unitPrice) : ''}
+                                        </td>
+                                        <td style={{ width: '55%', textAlign: 'right' }}>
+                                            {item ? new Intl.NumberFormat('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(item.grossAmount) : ''}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+
+                        <div className="receipt-footer-right">
+                            <div className="receipt-total-value-row">
+                                {formattedTotal}
+                            </div>
+                            <div className="receipt-extra-space"></div>
+                        </div>
+                    </div>
+
                 </div>
 
-                <div className="receipt-footer">
-                    <div className="receipt-total-row" style={{ borderTop: '2px solid var(--text)', marginTop: '8px', paddingTop: '8px' }}>
-                        <span>TOTAL</span>
-                        <strong style={{ fontSize: '1.2rem' }}>{formatCurrency(sale.grossAmount)}</strong>
-                    </div>
-                    <div className="form-actions" style={{ marginTop: '24px', justifyContent: 'center' }}>
-                        <button className="button primary" onClick={() => window.print()}>Print Receipt</button>
-                        <button className="button secondary" onClick={onClose}>✕ Close</button>
-                    </div>
+                <div className="form-actions" style={{ marginTop: '24px', justifyContent: 'center' }}>
+                    <button className="button primary" onClick={() => window.print()}>Print Receipt</button>
+                    <button className="button secondary" onClick={onClose}>✕ Close</button>
                 </div>
             </div>
         </div>
@@ -5030,6 +5345,11 @@ export default function App() {
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
     const [toasts, setToasts] = useState([]);
 
+    // Network Sync State
+    const [serverInfo, setServerInfo] = useState({ running: false, ip: '', port: 3847 });
+    const [connectionStatus, setConnectionStatus] = useState({ connected: false, url: null, isClientMode: false });
+    const [remoteHostUrl, setRemoteHostUrl] = useState('');
+
     // Confirm dialog state
     const [confirmDialog, setConfirmDialog] = useState({
         isOpen: false,
@@ -5112,6 +5432,36 @@ export default function App() {
         }
 
         let alive = true;
+
+        async function initNetwork() {
+            try {
+                const info = await api.sync.getServerInfo();
+                const status = api.sync.getConnectionStatus();
+                if (alive) {
+                    setServerInfo(info);
+                    setConnectionStatus(status);
+                    if (status.url) setRemoteHostUrl(status.url);
+                }
+            } catch (err) {
+                console.error('Failed to init sync status:', err);
+            }
+        }
+
+        api.sync.onDataChanged((msg) => {
+            console.log('[sync] Data changed:', msg);
+            // Reload the current workspace view
+            loadWorkspace(true);
+            flash(`Data updated from ${msg.channel.split(':')[0]}`, 'info');
+        });
+
+        api.sync.onConnectionStatusChange((status) => {
+            setConnectionStatus(status);
+            if (status.connected) {
+                loadWorkspace(true);
+            }
+        });
+
+        void initNetwork();
 
         async function loadStatic() {
             try {
@@ -5196,6 +5546,40 @@ export default function App() {
             flash(error.message || 'Failed to load dashboard.', 'error');
         } finally {
             setLoading(false);
+        }
+    }
+
+    async function handleToggleServer(enabled) {
+        try {
+            const nextInfo = await api.sync.toggleServer(enabled);
+            setServerInfo(nextInfo);
+            flash(enabled ? 'Host server started.' : 'Host server stopped.', 'success');
+        } catch (error) {
+            flash(error.message || 'Failed to toggle server.', 'danger');
+        }
+    }
+
+    async function handleConnectRemote() {
+        if (!remoteHostUrl.trim()) return;
+        setLoading(true);
+        try {
+            const url = remoteHostUrl.trim().startsWith('http') ? remoteHostUrl.trim() : `http://${remoteHostUrl.trim()}`;
+            await api.sync.connectToHost(url);
+            flash('Connected to remote host.', 'success');
+        } catch (error) {
+            flash(error.message || 'Failed to connect to host.', 'danger');
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    async function handleDisconnectRemote() {
+        try {
+            api.sync.disconnectFromHost();
+            flash('Disconnected from remote. Using local database.', 'info');
+            await loadWorkspace(true);
+        } catch (error) {
+            flash(error.message || 'Error during disconnect.', 'danger');
         }
     }
 
@@ -5845,7 +6229,7 @@ export default function App() {
         try {
             const result = await api.customers.save(customerForm);
             flash(customerForm.id ? 'Customer profile updated.' : 'New customer profile saved.', 'success');
-            
+
             if (pendingCustomerAction && result) {
                 pendingCustomerAction(result);
                 setPendingCustomerAction(null);
@@ -5942,7 +6326,7 @@ export default function App() {
         try {
             const result = await api.suppliers.save(supplierForm);
             flash(supplierForm.id ? 'Supplier profile updated.' : 'New supplier profile saved.', 'success');
-            
+
             if (pendingSupplierAction && result) {
                 pendingSupplierAction(result);
                 setPendingSupplierAction(null);
@@ -6423,6 +6807,7 @@ export default function App() {
 
             {/* â”€â”€ Main App Shell â”€â”€ */}
             <div className="app-shell">
+                <div className={`sidebar-backdrop ${isSidebarOpen ? 'open' : ''}`} onClick={() => setIsSidebarOpen(false)} />
                 <aside className={`sidebar ${isSidebarOpen ? 'open' : ''}`}>
                     <div className="sidebar-brand">
                         <div className="brand-mark">
@@ -6651,6 +7036,13 @@ export default function App() {
                             onSaveTaxSettings={handleSaveTaxSettings}
                             onExportFull={handleExportFull}
                             onImportFull={() => handleImportData('Full Database', null)}
+                            serverInfo={serverInfo}
+                            connectionStatus={connectionStatus}
+                            remoteHostUrl={remoteHostUrl}
+                            setRemoteHostUrl={setRemoteHostUrl}
+                            onToggleServer={handleToggleServer}
+                            onConnectRemote={handleConnectRemote}
+                            onDisconnectRemote={handleDisconnectRemote}
                         />
                     ) : null}
                 </main>

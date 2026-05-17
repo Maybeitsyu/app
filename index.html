@@ -15,6 +15,109 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // ── AgriLedger Mobile/Browser Polyfill ──
+      // If the app is loaded directly in a web browser (like a mobile phone),
+      // we mock the Electron context bridge and route all database queries
+      // over HTTP to the host computer's Express server on port 3847.
+      if (!window.agriLedger) {
+        console.log('%c[AgriLedger] Browser Mode Detected. Initializing LAN sync polyfill...', 'color: #0d9488; font-weight: bold;');
+        
+        // Auto-detect the host computer IP from the URL (port 3847 for Express sync server)
+        const hostIp = window.location.hostname;
+        const serverUrl = `http://${hostIp}:3847`;
+
+        async function httpInvoke(channel, payload) {
+          const res = await fetch(`${serverUrl}/api/rpc`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ channel, payload })
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data.error || `Request failed: ${res.status}`);
+          }
+          return data.result;
+        }
+
+        window.agriLedger = {
+          app: {
+            getMeta: () => httpInvoke('app:getMeta'),
+            analyzeExcel: (opts) => httpInvoke('app:analyzeExcel', opts)
+          },
+          lookups: {
+            get: () => httpInvoke('lookups:get')
+          },
+          settings: {
+            getTax: () => httpInvoke('settings:getTax'),
+            saveTax: (payload) => httpInvoke('settings:saveTax', payload)
+          },
+          dashboard: {
+            getOverview: (filters) => httpInvoke('dashboard:getOverview', filters)
+          },
+          products: {
+            list: (filters) => httpInvoke('products:list', filters),
+            save: (payload) => httpInvoke('products:save', payload),
+            delete: (id) => httpInvoke('products:delete', id),
+            bulkDelete: (ids) => httpInvoke('products:bulkDelete', ids),
+            getStock: (productId) => httpInvoke('products:getStock', productId),
+            split: (payload) => httpInvoke('products:split', payload)
+          },
+          customers: {
+            list: (filters) => httpInvoke('customers:list', filters),
+            save: (payload) => httpInvoke('customers:save', payload),
+            delete: (id) => httpInvoke('customers:delete', id),
+            bulkDelete: (ids) => httpInvoke('customers:bulkDelete', ids)
+          },
+          suppliers: {
+            list: (filters) => httpInvoke('suppliers:list', filters),
+            save: (payload) => httpInvoke('suppliers:save', payload),
+            delete: (id) => httpInvoke('suppliers:delete', id),
+            bulkDelete: (ids) => httpInvoke('suppliers:bulkDelete', ids)
+          },
+          sales: {
+            list: (filters) => httpInvoke('sales:list', filters),
+            save: (payload) => httpInvoke('sales:save', payload),
+            delete: (id) => httpInvoke('sales:delete', id),
+            bulkDelete: (ids) => httpInvoke('sales:bulkDelete', ids),
+            get: (id) => httpInvoke('sales:get', id)
+          },
+          purchases: {
+            list: (filters) => httpInvoke('purchases:list', filters),
+            save: (payload) => httpInvoke('purchases:save', payload),
+            delete: (id) => httpInvoke('purchases:delete', id),
+            bulkDelete: (ids) => httpInvoke('purchases:bulkDelete', ids)
+          },
+          batches: {
+            create: (payload) => httpInvoke('batches:create', payload)
+          },
+          sync: {
+            resolvePhotoUrl: (path) => {
+              if (!path) return '';
+              const filename = path.split(/[/\\]/).pop();
+              return `${serverUrl}/api/photos/${filename}`;
+            },
+            getConnectionStatus: () => ({ connected: true, url: serverUrl, isClientMode: true }),
+            onDataChanged: (callback) => {
+              // Connect to the host's SSE live-update broadcast
+              try {
+                const eventSource = new EventSource(`${serverUrl}/api/events`);
+                eventSource.onmessage = (event) => {
+                  const msg = JSON.parse(event.data);
+                  if (msg.type === 'data-changed') callback(msg);
+                };
+              } catch (e) {
+                console.error('Failed to attach live network updates on mobile browser:', e);
+              }
+            },
+            onConnectionStatusChange: () => {}
+          },
+          reports: {
+            getFinancialStatement: (filters) => httpInvoke('reports:getFinancialStatement', filters)
+          }
+        };
+      }
+    </script>
     <script type="module" src="/src/renderer/main.jsx"></script>
   </body>
 </html>

@@ -178,7 +178,7 @@ export function calculateSaleLine({
     vatExemptAmount: isVatExempt ? grossAmount : 0,
     costing: safeUnitCost,
     totalCost,
-    profit: roundMoney(grossAmount - vatSplit.vatAmount - totalCost)
+    profit: roundMoney(grossAmount - vatSplit.vatAmount - costVatSplit.netOfVat)
   };
 }
 
