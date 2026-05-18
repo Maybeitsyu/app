@@ -118,20 +118,34 @@ function ProductSearchSelect({ products, value, onChange, placeholder = "Choose 
     );
 }
 
-function PurchaseItemRow({ item, index, products, onUpdate, onRemove, onUploadPhoto, isLast }) {
+function PurchaseItemRow({ item, index, products, supplierProducts, onUpdate, onRemove, onUploadPhoto, isLast }) {
     const [searchTerm, setSearchTerm] = useState(item.product_code || item.product_name || '');
     const [showDropdown, setShowDropdown] = useState(false);
     const [showAdvanced, setShowAdvanced] = useState(false);
     const dropdownRef = useRef(null);
 
     const filteredProducts = useMemo(() => {
-        if (!searchTerm) return products.slice(0, 10);
-        const q = searchTerm.toLowerCase();
-        return products.filter(p =>
-            p.code?.toLowerCase().includes(q) ||
-            p.name?.toLowerCase().includes(q)
-        ).slice(0, 10);
-    }, [products, searchTerm]);
+        let filtered = products;
+        if (searchTerm) {
+            const q = searchTerm.toLowerCase();
+            filtered = products.filter(p =>
+                p.code?.toLowerCase().includes(q) ||
+                p.name?.toLowerCase().includes(q)
+            );
+        }
+
+        if (supplierProducts && (supplierProducts.ids.size > 0 || supplierProducts.codes.size > 0)) {
+            filtered = [...filtered].sort((a, b) => {
+                const aIsSupplier = supplierProducts.ids.has(a.id) || supplierProducts.codes.has(a.code);
+                const bIsSupplier = supplierProducts.ids.has(b.id) || supplierProducts.codes.has(b.code);
+                if (aIsSupplier && !bIsSupplier) return -1;
+                if (!aIsSupplier && bIsSupplier) return 1;
+                return 0;
+            });
+        }
+
+        return filtered.slice(0, 10);
+    }, [products, searchTerm, supplierProducts]);
 
     useEffect(() => {
         const handleClickOutside = (event) => {
@@ -194,28 +208,47 @@ function PurchaseItemRow({ item, index, products, onUpdate, onRemove, onUploadPh
                     {showDropdown && (
                         <div className="search-select-dropdown premium-dropdown" style={{ top: 'auto', bottom: 'calc(100% + 4px)', left: 0, right: 0, minWidth: '420px', zIndex: 1000 }}>
                             <div className="dropdown-scroll-area">
-                                {filteredProducts.map(p => (
-                                    <div key={p.id} className="search-select-item premium-item" onClick={() => handleSelect(p)}>
-                                        <div className="item-main">
-                                            <div className="item-icon">
-                                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                                    <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path>
-                                                    <polyline points="3.29 7 12 12 20.71 7"></polyline>
-                                                    <line x1="12" y1="22" x2="12" y2="12"></line>
-                                                </svg>
-                                            </div>
-                                            <div className="item-details">
-                                                <div className="item-name">{p.name}</div>
-                                                <div className="item-meta">
-                                                    <span className="item-code">{p.code}</span>
-                                                    <span className="dot">•</span>
-                                                    <span className="item-stock">{p.stockQty} {p.unit} in stock</span>
+                                {filteredProducts.map(p => {
+                                    const isSupplierProduct = supplierProducts && (supplierProducts.ids.has(p.id) || supplierProducts.codes.has(p.code));
+                                    return (
+                                        <div key={p.id} className="search-select-item premium-item" onClick={() => handleSelect(p)}>
+                                            <div className="item-main">
+                                                <div className="item-icon">
+                                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                        <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path>
+                                                        <polyline points="3.29 7 12 12 20.71 7"></polyline>
+                                                        <line x1="12" y1="22" x2="12" y2="12"></line>
+                                                    </svg>
+                                                </div>
+                                                <div className="item-details">
+                                                    <div className="item-name" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                        {p.name}
+                                                        {isSupplierProduct && (
+                                                            <span style={{
+                                                                fontSize: '0.62rem',
+                                                                background: 'var(--primary-fade)',
+                                                                color: 'var(--primary-strong)',
+                                                                padding: '2px 6px',
+                                                                borderRadius: '4px',
+                                                                fontWeight: 'bold',
+                                                                letterSpacing: '0.02em',
+                                                                textTransform: 'uppercase'
+                                                            }}>
+                                                                Supplier Product
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div className="item-meta">
+                                                        <span className="item-code">{p.code}</span>
+                                                        <span className="dot">•</span>
+                                                        <span className="item-stock">{p.stockQty} {p.unit} in stock</span>
+                                                    </div>
                                                 </div>
                                             </div>
+                                            <div className="item-price">{formatCurrency(p.average_cost || p.cost)}</div>
                                         </div>
-                                        <div className="item-price">{formatCurrency(p.average_cost || p.cost)}</div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                             {searchTerm.trim() && (
                                 <div
@@ -3751,6 +3784,22 @@ function PurchasesTab({
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize, setPageSize] = useState(50);
 
+    // Compute supplier-specific products purchased in past purchases
+    const supplierProducts = useMemo(() => {
+        if (!form.supplier_name) return { ids: new Set(), codes: new Set() };
+        const ids = new Set();
+        const codes = new Set();
+        for (const p of purchases) {
+            if (p.supplierName && p.supplierName.toLowerCase() === form.supplier_name.toLowerCase()) {
+                for (const item of (p.items || [])) {
+                    if (item.productId) ids.add(item.productId);
+                    if (item.productCode) codes.add(item.productCode);
+                }
+            }
+        }
+        return { ids, codes };
+    }, [purchases, form.supplier_name]);
+
     // Build a merged list of all companies: predefined + any custom ones found in existing purchases
     const allCompanyNames = Array.from(new Set([
         ...companyNames,
@@ -4010,6 +4059,7 @@ function PurchasesTab({
                                                             item={item}
                                                             index={index}
                                                             products={products}
+                                                            supplierProducts={supplierProducts}
                                                             onUpdate={updateItem}
                                                             onRemove={removeItem}
                                                             onUploadPhoto={(e) => onUploadItemPhoto && onUploadItemPhoto(index, e)}
