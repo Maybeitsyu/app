@@ -252,16 +252,43 @@ export function createSyncServer(repository, photosDir, uiDir) {
 }
 
 /**
- * Returns the first non-internal IPv4 address for LAN discovery.
+ * Returns the local IP address, prioritizing physical Wi-Fi and Ethernet adapters
+ * and avoiding virtual adapters (e.g. VirtualBox, VMware, WSL).
  */
 export function getLanIpAddress() {
   const interfaces = os.networkInterfaces();
+  const candidates = [];
+
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name]) {
       if ((iface.family === 'IPv4' || iface.family === 4) && !iface.internal) {
-        return iface.address;
+        candidates.push({ name: name.toLowerCase(), address: iface.address });
       }
     }
   }
-  return '127.0.0.1';
+
+  if (candidates.length === 0) {
+    return '127.0.0.1';
+  }
+
+  // Prioritize active physical interfaces (Wi-Fi, Ethernet, macOS en0/en1, etc.)
+  const preferredKeywords = ['wi-fi', 'wifi', 'wlan', 'ethernet', 'local area connection', 'en0', 'en1'];
+  for (const keyword of preferredKeywords) {
+    const match = candidates.find(c => c.name.includes(keyword));
+    if (match) {
+      return match.address;
+    }
+  }
+
+  // Filter out known virtual/host-only network adapters
+  const virtualKeywords = ['virtual', 'vbox', 'vmware', 'vethernet', 'host-only', 'pseudo', 'loopback', 'wsl'];
+  const physicalCandidates = candidates.filter(c => 
+    !virtualKeywords.some(keyword => c.name.includes(keyword))
+  );
+
+  if (physicalCandidates.length > 0) {
+    return physicalCandidates[0].address;
+  }
+
+  return candidates[0].address;
 }
