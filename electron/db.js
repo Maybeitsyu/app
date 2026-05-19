@@ -332,6 +332,26 @@ function serializeSupplier(row) {
   };
 }
 
+function serializeForeignCurrencyTransaction(row) {
+  const amountPaid = roundMoney(row.amount_paid);
+  const landedCost = roundMoney(row.landed_cost);
+  const diff = roundMoney(landedCost - amountPaid);
+  
+  return {
+    id: row.id,
+    companyName: row.company_name,
+    date: row.date,
+    voucherNo: row.voucher_no,
+    supplierName: row.supplier_name,
+    amountPaid,
+    landedCost,
+    loss: diff < 0 ? roundMoney(-diff) : 0,
+    gain: diff > 0 ? diff : 0,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
 function serializePurchase(row) {
   return {
     id: row.id,
@@ -583,20 +603,28 @@ function getFinancialStatement(db, { fromDate = '', toDate = '', companyName = '
 
   const whereClause = `WHERE ${conditions.join(' AND ')}`;
 
-  // 1. Sales & COGS
+  // 1. Sales
   const salesAgg = db.prepare(`
     SELECT 
-      COALESCE(SUM(gross_amount - output_vat), 0) as total_sales,
-      COALESCE(SUM(COALESCE(gross_amount, 0) - COALESCE(profit, 0) - COALESCE(output_vat, 0)), 0) as total_cogs
+      COALESCE(SUM(gross_amount - output_vat), 0) as total_sales
     FROM sales
     ${whereClause} AND status NOT IN ('FAILED', 'Return')
+  `).get(...params);
+
+  // 1b. COGS (Gross amount, no tax)
+  const cogsAgg = db.prepare(`
+    SELECT 
+      COALESCE(SUM(si.total_cost), 0) as total_cogs
+    FROM sale_items si
+    INNER JOIN sales s ON si.sale_id = s.id
+    ${whereClause.replace(/\b(date|company_name)\b/g, 's.$1')} AND s.status NOT IN ('FAILED', 'Return')
   `).get(...params);
 
   // 2. Expenses by Category
   const expenseRows = db.prepare(`
     SELECT 
       expense_category as category,
-      COALESCE(SUM(net_of_vat), 0) as amount
+      COALESCE(SUM(gross_amount), 0) as amount
     FROM purchases
     ${whereClause}
     GROUP BY expense_category
@@ -609,14 +637,26 @@ function getFinancialStatement(db, { fromDate = '', toDate = '', companyName = '
 
   const matSuppAmount = expenses['Materials & Supplies'] || 0;
   const totalSales = roundMoney(salesAgg.total_sales);
-  const totalCogs = roundMoney(matSuppAmount);
+  const totalCogs = roundMoney(cogsAgg.total_cogs);
   const grossProfit = roundMoney(totalSales - totalCogs);
 
   // Exclude Materials & Supplies from Operating Expenses
   delete expenses['Materials & Supplies'];
 
   const totalExpenses = roundMoney(Object.values(expenses).reduce((a, b) => a + b, 0));
-  const netIncomeBeforeTax = roundMoney(grossProfit - totalExpenses);
+
+  // Compute fxGain and fxLoss from foreign_currency_transactions
+  const fctRows = db.prepare(`
+    SELECT 
+      COALESCE(SUM(CASE WHEN landed_cost > amount_paid THEN landed_cost - amount_paid ELSE 0 END), 0) as total_gain,
+      COALESCE(SUM(CASE WHEN amount_paid > landed_cost THEN amount_paid - landed_cost ELSE 0 END), 0) as total_loss
+    FROM foreign_currency_transactions
+    ${whereClause}
+  `).get(...params);
+
+  const fxGain = roundMoney(fctRows.total_gain);
+  const fxLoss = roundMoney(fctRows.total_loss);
+  const netIncomeBeforeTax = roundMoney(grossProfit - totalExpenses + fxGain - fxLoss);
   const incomeTaxExpense = roundMoney(netIncomeBeforeTax > 0 ? netIncomeBeforeTax * taxSettings.incomeTaxRate : 0);
 
   return {
@@ -627,6 +667,8 @@ function getFinancialStatement(db, { fromDate = '', toDate = '', companyName = '
     grossProfit,
     expenses,
     totalExpenses,
+    fxGain,
+    fxLoss,
     incomeTaxExpense,
     netIncomeAfterTax: roundMoney(netIncomeBeforeTax - incomeTaxExpense)
   };
@@ -1534,6 +1576,114 @@ function getSupplierById(db, id) {
   return row ? serializeSupplier(row) : null;
 }
 
+function getForeignCurrencyTransactionById(db, id) {
+  const row = db.prepare('SELECT * FROM foreign_currency_transactions WHERE id = ?').get(cleanString(id));
+  return row ? serializeForeignCurrencyTransaction(row) : null;
+}
+
+function listForeignCurrencyTransactions(db, { search = '', companyName = '', fromDate = '', toDate = '' } = {}) {
+  const conditions = [];
+  const params = [];
+  const query = cleanString(search).toLowerCase();
+
+  if (query) {
+    const like = `%${query}%`;
+    conditions.push(
+      `(lower(supplier_name) LIKE ? OR lower(voucher_no) LIKE ?)`
+    );
+    params.push(like, like);
+  }
+
+  if (companyName && companyName !== 'all') {
+    conditions.push('company_name = ?');
+    params.push(companyName);
+  }
+
+  if (fromDate) {
+    conditions.push('date >= ?');
+    params.push(fromDate);
+  }
+
+  if (toDate) {
+    conditions.push('date <= ?');
+    params.push(toDate);
+  }
+
+  let sql = 'SELECT * FROM foreign_currency_transactions';
+  if (conditions.length > 0) {
+    sql += ` WHERE ${conditions.join(' AND ')}`;
+  }
+  sql += ' ORDER BY date DESC, created_at DESC';
+
+  return db.prepare(sql).all(...params).map(serializeForeignCurrencyTransaction);
+}
+
+function upsertForeignCurrencyTransaction(db, payload = {}) {
+  const stamp = nowIso();
+  const id = cleanString(payload.id) || createId();
+  const companyName = normalizeCompany(payload.companyName || payload.company_name);
+  const date = cleanString(payload.date) || todayIsoDate();
+  const voucherNo = cleanString(payload.voucherNo ?? payload.voucher_no);
+  const supplierName = cleanString(payload.supplierName ?? payload.supplier_name);
+  const amountPaid = roundMoney(payload.amountPaid ?? payload.amount_paid ?? 0);
+  const landedCost = roundMoney(payload.landedCost ?? payload.landed_cost ?? 0);
+
+  if (!supplierName) {
+    throw new Error('Supplier name is required.');
+  }
+
+  db.prepare(
+    `
+      INSERT INTO foreign_currency_transactions (
+        id, company_name, date, voucher_no, supplier_name, amount_paid, landed_cost, created_at, updated_at
+      )
+      VALUES (
+        @id, @company_name, @date, @voucher_no, @supplier_name, @amount_paid, @landed_cost, @created_at, @updated_at
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        company_name = excluded.company_name,
+        date = excluded.date,
+        voucher_no = excluded.voucher_no,
+        supplier_name = excluded.supplier_name,
+        amount_paid = excluded.amount_paid,
+        landed_cost = excluded.landed_cost,
+        updated_at = excluded.updated_at
+    `
+  ).run({
+    id,
+    company_name: companyName,
+    date,
+    voucher_no: voucherNo,
+    supplier_name: supplierName,
+    amount_paid: amountPaid,
+    landed_cost: landedCost,
+    created_at: stamp,
+    updated_at: stamp
+  });
+
+  return getForeignCurrencyTransactionById(db, id);
+}
+
+function deleteForeignCurrencyTransaction(db, id) {
+  const fctId = cleanString(id);
+  if (!fctId) {
+    throw new Error('Transaction id is required.');
+  }
+  db.prepare('DELETE FROM foreign_currency_transactions WHERE id = ?').run(fctId);
+  return true;
+}
+
+function bulkDeleteForeignCurrencyTransactions(db, ids) {
+  if (!Array.isArray(ids) || ids.length === 0) return false;
+  const tx = db.transaction(() => {
+    for (const id of ids) {
+      deleteForeignCurrencyTransaction(db, id);
+    }
+  });
+  tx();
+  return true;
+}
+
 function listPurchases(db, { search = '', category = '', companyName = '', fromDate = '', toDate = '' } = {}) {
   const conditions = [];
   const params = [];
@@ -2338,22 +2488,16 @@ async function exportFinancialStatementToExcel(db, filePath, filters = {}) {
 
   addLine('Total', data.totalExpenses, true, true);
   sheet.addRow([]);
-
   const netOperatingIncome = roundMoney(data.grossProfit - data.totalExpenses);
   addLine('NET operating income', netOperatingIncome, true, true);
 
-  const fxAmount = data.expenses['Other / Gain (Loss) on Foreign Exchange'] || 0;
-  if (fxAmount < 0) {
-    addLine('Add: Gain Foreign currency transaction', Math.abs(fxAmount), false, true);
-  } else {
-    addLine('Less: Loss on Foreign currency transaction', fxAmount, false, true);
-  }
+  addLine('Add: Gain on foreign Currency Transaction', data.fxGain || 0, false, true);
+  addLine('Less: Loss on Foreign Currency Transaction', data.fxLoss || 0, false, true);
 
-  const netIncomeBeforeTax = roundMoney(netOperatingIncome - fxAmount);
+  const netIncomeBeforeTax = roundMoney(netOperatingIncome + (data.fxGain || 0) - (data.fxLoss || 0));
   addLine('Net Income Before Tax', netIncomeBeforeTax, true, true);
   addLine('Add previous income:', 0, false, true);
   sheet.addRow([]);
-
   addLine('Total Net Income', netIncomeBeforeTax, true, true);
   const taxRate = data.taxSettings.incomeTaxRate;
   const taxExpense = roundMoney(netIncomeBeforeTax > 0 ? netIncomeBeforeTax * taxRate : 0);
@@ -2377,6 +2521,10 @@ async function exportFinancialStatementToExcel(db, filePath, filters = {}) {
   dueRow.getCell(1).font = { ...boldFont, color: { argb: 'FFFF0000' } };
   dueRow.getCell(2).font = { ...boldFont, color: { argb: 'FFFF0000' } };
 
+  if (!filePath) {
+    const buffer = await workbook.xlsx.writeBuffer();
+    return buffer.toString('base64');
+  }
   await workbook.xlsx.writeFile(filePath);
   return true;
 }
@@ -2423,22 +2571,15 @@ async function exportFullReportToExcel(db, filePath) {
   });
 
   addFsLine('Total', fsData.totalExpenses, true, true);
-  fsSheet.addRow([]);
-
   const netOperatingIncome = roundMoney(fsData.grossProfit - fsData.totalExpenses);
   addFsLine('NET operating income', netOperatingIncome, true, true);
 
-  const fxAmount = fsData.expenses['Other / Gain (Loss) on Foreign Exchange'] || 0;
-  if (fxAmount < 0) {
-    addFsLine('Add: Gain Foreign currency transaction', Math.abs(fxAmount), false, true);
-  } else {
-    addFsLine('Less: Loss on Foreign currency transaction', fxAmount, false, true);
-  }
+  addFsLine('Add: Gain on foreign Currency Transaction', fsData.fxGain || 0, false, true);
+  addFsLine('Less: Loss on Foreign Currency Transaction', fsData.fxLoss || 0, false, true);
 
-  const netIncomeBeforeTax = roundMoney(netOperatingIncome - fxAmount);
+  const netIncomeBeforeTax = roundMoney(netOperatingIncome + (fsData.fxGain || 0) - (fsData.fxLoss || 0));
   addFsLine('Net Income Before Tax', netIncomeBeforeTax, true, true);
   addFsLine('Net Income', roundMoney(netIncomeBeforeTax), true, true);
-
   // 1. Query Sales Data
   const query = `
     SELECT 
@@ -2731,6 +2872,10 @@ async function exportFullReportToExcel(db, filePath) {
     });
   });
 
+  if (!filePath) {
+    const buffer = await workbook.xlsx.writeBuffer();
+    return buffer.toString('base64');
+  }
   await workbook.xlsx.writeFile(filePath);
   return true;
 }
@@ -2810,6 +2955,10 @@ async function exportSalesToExcel(db, filePath) {
     });
   });
 
+  if (!filePath) {
+    const buffer = await workbook.xlsx.writeBuffer();
+    return buffer.toString('base64');
+  }
   await workbook.xlsx.writeFile(filePath);
   return true;
 }
@@ -2866,6 +3015,10 @@ async function exportProductsToExcel(db, filePath) {
     }
   }
 
+  if (!filePath) {
+    const buffer = await workbook.xlsx.writeBuffer();
+    return buffer.toString('base64');
+  }
   await workbook.xlsx.writeFile(filePath);
   return true;
 }
@@ -2909,6 +3062,10 @@ async function exportPurchasesToExcel(db, filePath) {
     });
   }
 
+  if (!filePath) {
+    const buffer = await workbook.xlsx.writeBuffer();
+    return buffer.toString('base64');
+  }
   await workbook.xlsx.writeFile(filePath);
   return true;
 }
@@ -2936,6 +3093,10 @@ async function exportCustomersToExcel(db, filePath) {
     });
   });
 
+  if (!filePath) {
+    const buffer = await workbook.xlsx.writeBuffer();
+    return buffer.toString('base64');
+  }
   await workbook.xlsx.writeFile(filePath);
   return true;
 }
@@ -3155,6 +3316,9 @@ async function analyzeExcelFile(filePathOrData, isBufferData = false) {
       } else if (rowStr.includes('CODE') && rowStr.includes('STOCK')) {
         sheetType = 'INVENTORY';
         break;
+      } else if (rowStr.includes('VOUCHER NO.') && rowStr.includes('AMOUNT PAID') && rowStr.includes('LANDED COST')) {
+        sheetType = 'GAIN_LOSS';
+        break;
       } else if (rowStr.includes('NAME') && rowStr.includes('ADDRESS') && rowStr.includes('CONTACT')) {
         sheetType = 'CUSTOMERS';
         break;
@@ -3179,6 +3343,7 @@ async function importFullReportFromExcel(db, filePathOrData, selectedSheetNames 
   let salesImported = 0;
   let purchasesImported = 0;
   let productsUpdated = 0;
+  let fctImported = 0;
   const { vatRate } = getTaxSettings(db);
 
   const tx = db.transaction(() => {
@@ -3229,6 +3394,11 @@ async function importFullReportFromExcel(db, filePathOrData, selectedSheetNames 
           headers = rowVals;
           headerRowNumber = i;
           sheetType = 'INVENTORY';
+          break;
+        } else if (rowStr.includes('VOUCHER NO.') && rowStr.includes('AMOUNT PAID') && rowStr.includes('LANDED COST')) {
+          headers = rowVals;
+          headerRowNumber = i;
+          sheetType = 'GAIN_LOSS';
           break;
         } else if (rowStr.includes('NAME') && rowStr.includes('ADDRESS') && rowStr.includes('CONTACT')) {
           headers = rowVals;
@@ -3594,14 +3764,43 @@ async function importFullReportFromExcel(db, filePathOrData, selectedSheetNames 
             productsUpdated++;
           }
         }
+        else if (sheetType === 'GAIN_LOSS') {
+          const dateVal = getValByKeys(['DATE']);
+          const supplier = getValByKeys(['SUPPLIERS NAME', 'SUPPLIER NAME', 'SUPPLIER']);
+          const voucherNo = getValByKeys(['VOUCHER NO.', 'VOUCHER NO', 'VOUCHER#']);
+          const company = normalizeCompany(getValByKeys(['COMPANY']));
+
+          if (!dateVal || dateVal === 'DATE') return;
+
+          const dateColIdx = headers.findIndex(h => h && h.toUpperCase().replace(/[^A-Z0-9]/g, '') === 'DATE');
+          const cell = dateColIdx !== -1 ? row.getCell(dateColIdx) : null;
+          const date = parseExcelDate(cell, dateVal);
+          if (!date) return;
+
+          const amountPaid = parseFloat(getValByKeys(['AMOUNT PAID', 'AMOUNTPAID'])) || 0;
+          const landedCost = parseFloat(getValByKeys(['LANDED COST', 'LANDEDCOST'])) || 0;
+
+          if (!supplier) return;
+
+          db.prepare(`
+            INSERT INTO foreign_currency_transactions (
+              id, company_name, date, voucher_no, supplier_name, amount_paid, landed_cost, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            createId(), company, date, voucherNo || '', supplier,
+            amountPaid, landedCost, nowIso(), nowIso()
+          );
+          fctImported++;
+        }
       });
     });
-    return { sales: salesImported, purchases: purchasesImported, products: productsUpdated };
+    return { sales: salesImported, purchases: purchasesImported, products: productsUpdated, fct: fctImported };
   });
 
   const results = tx();
   console.log('>>> [COMPLETE] Import Results:', results);
-  return results.sales + results.purchases + results.products;
+  return results.sales + results.purchases + results.products + results.fct;
 }
 
 function getLookups() {
@@ -3790,6 +3989,18 @@ export function createRepository() {
     },
     getSupplierById(id) {
       return getSupplierById(db, id);
+    },
+    listForeignCurrencyTransactions(filters) {
+      return listForeignCurrencyTransactions(db, filters);
+    },
+    saveForeignCurrencyTransaction(payload) {
+      return upsertForeignCurrencyTransaction(db, payload);
+    },
+    deleteForeignCurrencyTransaction(id) {
+      return deleteForeignCurrencyTransaction(db, id);
+    },
+    bulkDeleteForeignCurrencyTransactions(ids) {
+      return bulkDeleteForeignCurrencyTransactions(db, ids);
     }
   };
 }

@@ -105,14 +105,43 @@
             delete: (id) => httpInvoke('purchases:delete', id),
             bulkDelete: (ids) => httpInvoke('purchases:bulkDelete', ids)
           },
+          fct: {
+            list: (filters) => httpInvoke('fct:list', filters),
+            save: (payload) => httpInvoke('fct:save', payload),
+            delete: (id) => httpInvoke('fct:delete', id),
+            bulkDelete: (ids) => httpInvoke('fct:bulkDelete', ids)
+          },
           data: {
             importSalesCsv: (opts) => httpInvoke('sales:importCsv', opts),
-            importSalesExcel: (opts) => httpInvoke('sales:importExcel', opts)
+            importSalesExcel: (opts) => httpInvoke('sales:importExcel', opts),
+            exportSalesExcel: (opts) => httpInvoke('sales:exportExcel', opts),
+            exportProductsExcel: (opts) => httpInvoke('products:exportExcel', opts),
+            exportPurchasesExcel: (opts) => httpInvoke('purchases:exportExcel', opts),
+            exportCustomersExcel: (opts) => httpInvoke('customers:exportExcel', opts),
+            exportFullExcel: (opts) => httpInvoke('app:exportFullExcel', opts)
           },
           batches: {
             create: (payload) => httpInvoke('batches:create', payload)
           },
           sync: {
+            getServerInfo: async () => {
+              try {
+                const res = await fetch(`${serverUrl}/api/health`);
+                const data = await res.json();
+                return {
+                  running: data.status === 'ok',
+                  port: 3847,
+                  ip: hostIp,
+                  hostname: data.hostname || 'Host',
+                  connectedClients: 0
+                };
+              } catch (e) {
+                return { running: false, port: 3847, ip: hostIp, hostname: '', connectedClients: 0 };
+              }
+            },
+            toggleServer: async (enabled) => {
+              return { running: enabled, port: 3847, ip: hostIp, hostname: '', connectedClients: 0 };
+            },
             resolvePhotoUrl: (path) => {
               if (!path) return '';
               const filename = path.split(/[/\\]/).pop();
@@ -134,7 +163,8 @@
             onConnectionStatusChange: () => {}
           },
           reports: {
-            getFinancialStatement: (filters) => httpInvoke('reports:getFinancialStatement', filters)
+            getFinancialStatement: (filters) => httpInvoke('reports:getFinancialStatement', filters),
+            exportFinancialStatementExcel: (opts) => httpInvoke('reports:exportFinancialStatementExcel', opts)
           }
         };
       }

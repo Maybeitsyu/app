@@ -12,9 +12,6 @@ let _connected = false;
 const LOCAL_ONLY_CHANNELS = new Set([
   'app:saveFileDialog', 'app:openFileDialog', 'app:writeFile', 'app:readFile',
   'app:openPath', 'app:openDataFolder',
-  'sales:exportExcel', 'products:exportExcel', 'purchases:exportExcel',
-  'customers:exportExcel',
-  'app:exportFullExcel', 'reports:exportFinancialStatementExcel',
   'products:uploadPhoto',
 ]);
 
@@ -243,6 +240,12 @@ contextBridge.exposeInMainWorld('agriLedger', {
     importSalesCsv: (options) => invoke('sales:importCsv', options),
     importSalesExcel: (options) => invoke('sales:importExcel', options),
     exportFullExcel: (options) => invoke('app:exportFullExcel', options)
+  },
+  fct: {
+    list: (filters) => invoke('fct:list', filters),
+    save: (payload) => invoke('fct:save', payload),
+    delete: (id) => invoke('fct:delete', id),
+    bulkDelete: (ids) => invoke('fct:bulkDelete', ids)
   },
   reports: {
     getFinancialStatement: (filters) => invoke('reports:getFinancialStatement', filters),

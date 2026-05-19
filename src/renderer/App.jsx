@@ -4543,14 +4543,356 @@ function PurchasesTab({
     );
 }
 
-function ReportsTab({ api, flash }) {
+function GainLossTab({ api, flash, companyNames }) {
+    const [transactions, setTransactions] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [search, setSearch] = useState('');
+    const [filters, setFilters] = useState({
+        companyName: companyNames[0] || '',
+        fromDate: new Date().toISOString().slice(0, 7) + '-01',
+        toDate: new Date().toISOString().slice(0, 10),
+    });
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [selectedIds, setSelectedIds] = useState(new Set());
+    const emptyForm = {
+        id: '',
+        companyName: companyNames[0] || '',
+        date: new Date().toISOString().slice(0, 10),
+        voucherNo: '',
+        supplierName: '',
+        amountPaid: '',
+        landedCost: '',
+    };
+    const [form, setForm] = useState(emptyForm);
+    const [saving, setSaving] = useState(false);
+
+    const loadData = useCallback(async () => {
+        setLoading(true);
+        try {
+            const data = await api.fct.list(filters);
+            setTransactions(data);
+        } catch (err) {
+            flash(err.message || 'Failed to load transactions.', 'danger');
+        } finally {
+            setLoading(false);
+        }
+    }, [api, filters, flash]);
+
+    useEffect(() => { loadData(); }, [loadData]);
+
+    const filtered = transactions.filter(t => {
+        if (!search) return true;
+        const q = search.toLowerCase();
+        return t.supplierName?.toLowerCase().includes(q) || t.voucherNo?.toLowerCase().includes(q);
+    });
+
+    const totalAmountPaid = roundMoney(filtered.reduce((s, t) => s + t.amountPaid, 0));
+    const totalLandedCost = roundMoney(filtered.reduce((s, t) => s + t.landedCost, 0));
+    const totalGain = roundMoney(filtered.reduce((s, t) => s + t.gain, 0));
+    const totalLoss = roundMoney(filtered.reduce((s, t) => s + t.loss, 0));
+
+    const openAdd = () => {
+        setForm({ ...emptyForm, companyName: filters.companyName || companyNames[0] || '' });
+        setIsModalOpen(true);
+    };
+    const openEdit = (t) => {
+        setForm({
+            id: t.id,
+            companyName: t.companyName,
+            date: t.date,
+            voucherNo: t.voucherNo || '',
+            supplierName: t.supplierName,
+            amountPaid: String(t.amountPaid),
+            landedCost: String(t.landedCost),
+        });
+        setIsModalOpen(true);
+    };
+    const closeModal = () => { setIsModalOpen(false); setForm(emptyForm); };
+
+    const handleSave = async () => {
+        if (!form.supplierName.trim()) { flash('Supplier name is required.', 'warning'); return; }
+        setSaving(true);
+        try {
+            await api.fct.save({
+                id: form.id || undefined,
+                companyName: form.companyName,
+                date: form.date,
+                voucherNo: form.voucherNo,
+                supplierName: form.supplierName.trim(),
+                amountPaid: parseFloat(form.amountPaid) || 0,
+                landedCost: parseFloat(form.landedCost) || 0,
+            });
+            flash(form.id ? 'Transaction updated.' : 'Transaction added.', 'success');
+            closeModal();
+            loadData();
+        } catch (err) {
+            flash(err.message || 'Save failed.', 'danger');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleDelete = async (id) => {
+        if (!confirm('Delete this transaction?')) return;
+        try {
+            await api.fct.delete(id);
+            flash('Transaction deleted.', 'success');
+            loadData();
+        } catch (err) {
+            flash(err.message || 'Delete failed.', 'danger');
+        }
+    };
+
+    const handleBulkDelete = async () => {
+        if (selectedIds.size === 0) return;
+        if (!confirm(`Delete ${selectedIds.size} transaction(s)?`)) return;
+        try {
+            await api.fct.bulkDelete([...selectedIds]);
+            setSelectedIds(new Set());
+            flash(`${selectedIds.size} transaction(s) deleted.`, 'success');
+            loadData();
+        } catch (err) {
+            flash(err.message || 'Bulk delete failed.', 'danger');
+        }
+    };
+
+    const toggleSelect = (id) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            next.has(id) ? next.delete(id) : next.add(id);
+            return next;
+        });
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedIds.size === filtered.length) {
+            setSelectedIds(new Set());
+        } else {
+            setSelectedIds(new Set(filtered.map(t => t.id)));
+        }
+    };
+
+    // Live preview gain/loss in form
+    const previewAmt = parseFloat(form.amountPaid) || 0;
+    const previewLand = parseFloat(form.landedCost) || 0;
+    const previewDiff = roundMoney(previewLand - previewAmt);
+    const previewGain = previewDiff > 0 ? previewDiff : 0;
+    const previewLoss = previewDiff < 0 ? -previewDiff : 0;
+
+    return (
+        <div className="stack">
+            {/* ── Filter Bar ── */}
+            <div className="filter-bar" style={{ marginBottom: '1.5rem' }}>
+                <div className="header-title-group" style={{ marginRight: 'auto' }}>
+                    <h2 className="panel-title" style={{ fontSize: '1.1rem' }}>Gain / Loss on Foreign Currency</h2>
+                </div>
+                <select
+                    className="select select-compact"
+                    value={filters.companyName}
+                    onChange={e => setFilters({ ...filters, companyName: e.target.value })}
+                >
+                    {companyNames.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <input
+                    className="input input-compact"
+                    type="date"
+                    value={filters.fromDate}
+                    onChange={e => setFilters({ ...filters, fromDate: e.target.value })}
+                />
+                <input
+                    className="input input-compact"
+                    type="date"
+                    value={filters.toDate}
+                    onChange={e => setFilters({ ...filters, toDate: e.target.value })}
+                />
+                <input
+                    className="input input-compact"
+                    type="text"
+                    placeholder="Search supplier / voucher…"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                />
+                <button className="button primary" onClick={openAdd}>+ Add Transaction</button>
+                {selectedIds.size > 0 && (
+                    <button className="button danger" onClick={handleBulkDelete}>
+                        Delete ({selectedIds.size})
+                    </button>
+                )}
+            </div>
+
+            {/* ── Summary Cards ── */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
+                {[
+                    { label: 'Amount Paid', value: totalAmountPaid, color: 'var(--muted-text)' },
+                    { label: 'Landed Cost', value: totalLandedCost, color: 'var(--muted-text)' },
+                    { label: 'Total Gain', value: totalGain, color: 'var(--success)' },
+                    { label: 'Total Loss', value: totalLoss, color: 'var(--danger)' },
+                ].map(({ label, value, color }) => (
+                    <div key={label} style={{
+                        background: 'var(--panel-solid)', border: '1px solid var(--border)',
+                        borderRadius: 'var(--radius-lg)', padding: '1rem 1.25rem'
+                    }}>
+                        <p className="muted" style={{ margin: 0, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '.05em' }}>{label}</p>
+                        <p style={{ margin: '4px 0 0', fontWeight: 700, fontSize: '1.1rem', color }}>{formatCurrency(value)}</p>
+                    </div>
+                ))}
+            </div>
+
+            <Panel title="Transactions">
+                {loading ? (
+                    <EmptyState title="Loading…" description="Fetching foreign currency transactions." />
+                ) : filtered.length === 0 ? (
+                    <EmptyState title="No transactions" description="Add a foreign currency transaction to get started." />
+                ) : (
+                    <div style={{ overflowX: 'auto' }}>
+                        <table className="table">
+                            <thead>
+                                <tr>
+                                    <th style={{ width: 36 }}>
+                                        <input type="checkbox" checked={selectedIds.size === filtered.length && filtered.length > 0}
+                                            onChange={toggleSelectAll} />
+                                    </th>
+                                    <th>Date</th>
+                                    <th>Voucher No.</th>
+                                    <th>Supplier Name</th>
+                                    <th className="text-right">Amount Paid</th>
+                                    <th className="text-right">Landed Cost</th>
+                                    <th className="text-right" style={{ color: 'var(--danger)' }}>Loss</th>
+                                    <th className="text-right" style={{ color: 'var(--success)' }}>Gain</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {filtered.map(t => (
+                                    <tr key={t.id} className={selectedIds.has(t.id) ? 'selected' : ''}>
+                                        <td><input type="checkbox" checked={selectedIds.has(t.id)} onChange={() => toggleSelect(t.id)} /></td>
+                                        <td>{formatDateShort(t.date)}</td>
+                                        <td>{t.voucherNo || <span className="muted">—</span>}</td>
+                                        <td>{t.supplierName}</td>
+                                        <td className="text-right">{formatCurrency(t.amountPaid)}</td>
+                                        <td className="text-right">{formatCurrency(t.landedCost)}</td>
+                                        <td className="text-right" style={{ color: t.loss > 0 ? 'var(--danger)' : 'inherit' }}>
+                                            {t.loss > 0 ? formatCurrency(t.loss) : <span className="muted">—</span>}
+                                        </td>
+                                        <td className="text-right" style={{ color: t.gain > 0 ? 'var(--success)' : 'inherit' }}>
+                                            {t.gain > 0 ? formatCurrency(t.gain) : <span className="muted">—</span>}
+                                        </td>
+                                        <td>
+                                            <div className="action-group">
+                                                <button className="button secondary small" onClick={() => openEdit(t)}>Edit</button>
+                                                <button className="button danger small" onClick={() => handleDelete(t.id)}>Delete</button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                            <tfoot>
+                                <tr style={{ fontWeight: 700, borderTop: '2px solid var(--border-strong)' }}>
+                                    <td colSpan={4} style={{ paddingTop: '0.75rem' }}>Totals</td>
+                                    <td className="text-right">{formatCurrency(totalAmountPaid)}</td>
+                                    <td className="text-right">{formatCurrency(totalLandedCost)}</td>
+                                    <td className="text-right" style={{ color: 'var(--danger)' }}>{formatCurrency(totalLoss)}</td>
+                                    <td className="text-right" style={{ color: 'var(--success)' }}>{formatCurrency(totalGain)}</td>
+                                    <td />
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                )}
+            </Panel>
+
+            {/* ── Add/Edit Modal ── */}
+            {isModalOpen && (
+                <div className="modal-backdrop">
+                    <div className="modal-box" style={{ maxWidth: 520 }}>
+                        <div className="modal-header">
+                            <h3 className="modal-title">{form.id ? 'Edit Transaction' : 'Add Transaction'}</h3>
+                            <button className="modal-close" type="button" onClick={closeModal}>✕</button>
+                        </div>
+
+                        <div className="stack" style={{ gap: '1rem', marginTop: '1rem' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                <label className="label-group">
+                                    <span>Date</span>
+                                    <input className="input" type="date" value={form.date}
+                                        onChange={e => setForm({ ...form, date: e.target.value })} />
+                                </label>
+                                <label className="label-group">
+                                    <span>Company</span>
+                                    <select className="select" value={form.companyName}
+                                        onChange={e => setForm({ ...form, companyName: e.target.value })}>
+                                        {companyNames.map(c => <option key={c} value={c}>{c}</option>)}
+                                    </select>
+                                </label>
+                            </div>
+                            <label className="label-group">
+                                <span>Voucher No.</span>
+                                <input className="input" type="text" placeholder="e.g. 12926001"
+                                    value={form.voucherNo}
+                                    onChange={e => setForm({ ...form, voucherNo: e.target.value })} />
+                            </label>
+                            <label className="label-group">
+                                <span>Supplier Name <span style={{ color: 'var(--danger)' }}>*</span></span>
+                                <input className="input" type="text" placeholder="e.g. SCHILLS / LEVY"
+                                    value={form.supplierName}
+                                    onChange={e => setForm({ ...form, supplierName: e.target.value })} />
+                            </label>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                <label className="label-group">
+                                    <span>Amount Paid (₱)</span>
+                                    <input className="input" type="number" step="0.01" placeholder="0.00"
+                                        value={form.amountPaid}
+                                        onChange={e => setForm({ ...form, amountPaid: e.target.value })} />
+                                </label>
+                                <label className="label-group">
+                                    <span>Landed Cost (₱)</span>
+                                    <input className="input" type="number" step="0.01" placeholder="0.00"
+                                        value={form.landedCost}
+                                        onChange={e => setForm({ ...form, landedCost: e.target.value })} />
+                                </label>
+                            </div>
+
+                            {/* Live preview */}
+                            {(previewAmt > 0 || previewLand > 0) && (
+                                <div style={{
+                                    borderRadius: 'var(--radius-md)',
+                                    padding: '0.75rem 1rem',
+                                    background: previewGain > 0 ? 'rgba(34,197,94,.08)' : previewLoss > 0 ? 'rgba(239,68,68,.08)' : 'var(--surface)',
+                                    border: `1px solid ${previewGain > 0 ? 'rgba(34,197,94,.3)' : previewLoss > 0 ? 'rgba(239,68,68,.3)' : 'var(--border)'}`,
+                                    display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                                }}>
+                                    {previewGain > 0 && (
+                                        <><span style={{ color: 'var(--success)', fontWeight: 600 }}>✓ Gain on Foreign Currency Transaction</span>
+                                            <strong style={{ color: 'var(--success)' }}>{formatCurrency(previewGain)}</strong></>
+                                    )}
+                                    {previewLoss > 0 && (
+                                        <><span style={{ color: 'var(--danger)', fontWeight: 600 }}>✗ Loss on Foreign Currency Transaction</span>
+                                            <strong style={{ color: 'var(--danger)' }}>{formatCurrency(previewLoss)}</strong></>
+                                    )}
+                                    {previewDiff === 0 && previewAmt > 0 && (
+                                        <span className="muted">No gain or loss (breakeven)</span>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="form-actions" style={{ marginTop: '1.5rem' }}>
+                            <button className="button primary" onClick={handleSave} disabled={saving}>
+                                {saving ? 'Saving…' : form.id ? 'Update' : 'Add Transaction'}
+                            </button>
+                            <button className="button secondary" onClick={closeModal} disabled={saving}>Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function ReportsTab({ api, flash, filters, setFilters, isClientMode }) {
+
     const [report, setReport] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [filters, setFilters] = useState({
-        fromDate: toDateInputValue(new Date(new Date().getFullYear(), 0, 1)), // Start of year
-        toDate: toDateInputValue(),
-        companyName: companyNames[0]
-    });
 
     const loadReport = useCallback(async () => {
         setLoading(true);
@@ -4571,15 +4913,23 @@ function ReportsTab({ api, flash }) {
     const handleExport = async () => {
         try {
             const defaultPath = `Financial_Statement_${filters.companyName.replace(/[^a-z0-9]/gi, '_')}_${filters.toDate}.xlsx`;
-            const filePath = await api.files.saveDialog({
-                title: 'Export Financial Statement',
-                defaultPath,
-                filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
-            });
 
-            if (filePath) {
-                await api.reports.exportFinancialStatementExcel({ filePath, filters });
-                flash('Financial statement exported successfully! Click to open.', 'success', { onClick: () => api.app.openPath(filePath) });
+            if (isClientMode) {
+                flash('Generating Financial Statement...', 'neutral');
+                const base64Data = await api.reports.exportFinancialStatementExcel({ filters });
+                downloadBase64File(base64Data, defaultPath);
+                flash('Financial statement exported successfully!', 'success');
+            } else {
+                const filePath = await api.files.saveDialog({
+                    title: 'Export Financial Statement',
+                    defaultPath,
+                    filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
+                });
+
+                if (filePath) {
+                    await api.reports.exportFinancialStatementExcel({ filePath, filters });
+                    flash('Financial statement exported successfully! Click to open.', 'success', { onClick: () => api.app.openPath(filePath) });
+                }
             }
         } catch (error) {
             flash(error.message || 'Export failed', 'danger');
@@ -4601,10 +4951,11 @@ function ReportsTab({ api, flash }) {
         );
     }
 
-    const fxAmount = report?.expenses?.['Other / Gain (Loss) on Foreign Exchange'] || 0;
-    const operatingExpenses = roundMoney((report?.totalExpenses || 0) - fxAmount);
+    const fxGain = report?.fxGain || 0;
+    const fxLoss = report?.fxLoss || 0;
+    const operatingExpenses = roundMoney(report?.totalExpenses || 0);
     const netOperatingIncome = report ? roundMoney((report?.grossProfit || 0) - operatingExpenses) : 0;
-    const netIncomeBeforeTax = roundMoney(netOperatingIncome - fxAmount);
+    const netIncomeBeforeTax = roundMoney(netOperatingIncome + fxGain - fxLoss);
     const incomeTaxRate = report?.taxSettings?.incomeTaxRate ?? defaultTaxSettings.incomeTaxRate;
     const taxExpense = roundMoney(netIncomeBeforeTax > 0 ? netIncomeBeforeTax * incomeTaxRate : 0);
 
@@ -4636,7 +4987,7 @@ function ReportsTab({ api, flash }) {
                 <button className="button primary" onClick={handleExport}>Export Excel</button>
             </div>
 
-            <Panel title="Income Statement" subtitle={`Calculated from ${formatDateShort(filters.fromDate)} to ${formatDateShort(filters.toDate)}`}>
+            <Panel title="Financial Statement" subtitle={`Calculated from ${formatDateShort(filters.fromDate)} to ${formatDateShort(filters.toDate)}`}>
                 <div className="report-container" style={{
                     background: 'var(--panel-solid)',
                     padding: '40px',
@@ -4685,12 +5036,13 @@ function ReportsTab({ api, flash }) {
                         <span>{formatCurrency(netOperatingIncome)}</span>
                     </div>
 
-                    <div className="report-row" style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', marginTop: '8px' }}>
-                        {fxAmount < 0 ? (
-                            <><span>Add: Gain Foreign currency transaction</span><span>{formatCurrency(Math.abs(fxAmount))}</span></>
-                        ) : (
-                            <><span>Less: Loss on Foreign currency transaction</span><span>{formatCurrency(fxAmount)}</span></>
-                        )}
+                    <div className="report-row" style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', marginTop: '8px', color: 'var(--success)' }}>
+                        <span>Add: Gain on foreign Currency Transaction</span>
+                        <span>{formatCurrency(fxGain)}</span>
+                    </div>
+                    <div className="report-row" style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', color: 'var(--danger)' }}>
+                        <span>Less: Loss on Foreign Currency Transaction</span>
+                        <span>{formatCurrency(fxLoss)}</span>
                     </div>
 
                     <div className="report-row bold" style={{ display: 'flex', justifyContent: 'space-between', padding: '16px 0', marginTop: '8px', fontSize: '1.1rem' }}>
@@ -4776,6 +5128,31 @@ function SettingsTab({
         } finally {
             setSavingTax(false);
         }
+    }
+
+    if (connectionStatus.isClientMode) {
+        return (
+            <div className="settings-console">
+                <section className="settings-board">
+                    <div className="settings-board-head">
+                        <h2><span aria-hidden="true">::</span> Workspace Settings</h2>
+                    </div>
+                    <div className="settings-accordion-grid">
+                        <div className="settings-accordion-card open" style={{ border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden' }}>
+                            <div style={{ padding: '1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--panel-bg)' }}>
+                                <strong style={{ fontSize: '1rem' }}>Full Database Backup</strong>
+                            </div>
+                            <div className="settings-accordion-body single" style={{ display: 'block', padding: '1.25rem', borderTop: '1px solid var(--border)' }}>
+                                <p className="row-note" style={{ marginBottom: '1rem' }}>Includes all categories below. Pictures are supported in the Excel file.</p>
+                                <div className="settings-row-actions">
+                                    <button className="button primary" type="button" onClick={onExportFull}>Export Excel</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        );
     }
 
     return (
@@ -5604,6 +5981,23 @@ function SplitProductDialog({ product, isOpen, onConfirm, onCancel }) {
 
 
 
+function downloadBase64File(base64Data, fileName) {
+    const contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    const byteCharacters = atob(base64Data);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: contentType });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
 export default function App() {
     const api = typeof window !== 'undefined' ? window.agriLedger : null;
 
@@ -5682,6 +6076,11 @@ export default function App() {
     const [dashboardFilters, setDashboardFilters] = useState({
         fromDate: '',
         toDate: ''
+    });
+    const [reportFilters, setReportFilters] = useState({
+        fromDate: toDateInputValue(new Date(new Date().getFullYear(), 0, 1)), // Start of year
+        toDate: toDateInputValue(),
+        companyName: companyNames[0]
     });
     const [productForm, setProductForm] = useState(blankProductForm());
     const [customerForm, setCustomerForm] = useState(blankCustomerForm());
@@ -6351,16 +6750,25 @@ export default function App() {
 
     async function handleGenericExport(prefix, successMsg, exportFn) {
         try {
-            const filePath = await api.files.saveDialog({
-                title: `Export ${prefix}`,
-                defaultPath: `${prefix}-${new Date().toISOString().slice(0, 10)}.xlsx`,
-                filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
-            });
+            const fileName = `${prefix}-${new Date().toISOString().slice(0, 10)}.xlsx`;
 
-            if (filePath) {
-                flash('Exporting Excel file...', 'neutral');
-                await exportFn({ filePath });
-                flash(successMsg + ' Click to open.', 'success', { onClick: () => api.app.openPath(filePath) });
+            if (connectionStatus.isClientMode) {
+                flash('Generating Excel file...', 'neutral');
+                const base64Data = await exportFn({});
+                downloadBase64File(base64Data, fileName);
+                flash(successMsg, 'success');
+            } else {
+                const filePath = await api.files.saveDialog({
+                    title: `Export ${prefix}`,
+                    defaultPath: fileName,
+                    filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
+                });
+
+                if (filePath) {
+                    flash('Exporting Excel file...', 'neutral');
+                    await exportFn({ filePath });
+                    flash(successMsg + ' Click to open.', 'success', { onClick: () => api.app.openPath(filePath) });
+                }
             }
         } catch (error) {
             flash(error.message || `Failed to export ${prefix}.`, 'error');
@@ -6380,7 +6788,7 @@ export default function App() {
                 if (!file) return;
 
                 const isExcel = file.name.toLowerCase().endsWith('.xlsx');
-                
+
                 try {
                     if (isExcel) {
                         flash('Uploading and analyzing Excel file...', 'neutral');
@@ -6397,11 +6805,11 @@ export default function App() {
                                 }
                                 const base64Data = window.btoa(binary);
 
-                                const sheets = await window.agriLedger.app.analyzeExcel({ 
+                                const sheets = await window.agriLedger.app.analyzeExcel({
                                     fileData: base64Data,
-                                    isBufferData: true 
+                                    isBufferData: true
                                 });
-                                
+
                                 setImportDialog({
                                     isOpen: true,
                                     filePath: null,
@@ -6490,10 +6898,10 @@ export default function App() {
         try {
             let count;
             if (fileData) {
-                count = await window.agriLedger.data.importSalesExcel({ 
-                    fileData, 
-                    selectedSheetNames, 
-                    isBufferData: true 
+                count = await window.agriLedger.data.importSalesExcel({
+                    fileData,
+                    selectedSheetNames,
+                    isBufferData: true
                 });
             } else {
                 count = await api.data.importSalesExcel({ filePath, selectedSheetNames });
@@ -7107,6 +7515,10 @@ export default function App() {
             title: 'Purchases',
             subtitle: 'Expense tracking and VAT totals'
         },
+        gainLoss: {
+            title: 'Gain/Loss',
+            subtitle: 'Foreign currency transaction gain & loss'
+        },
         reports: {
             title: 'Reports',
             subtitle: 'Financial statements and business analytics'
@@ -7388,10 +7800,21 @@ export default function App() {
 
 
 
+                    {activeTab === 'gainLoss' ? (
+                        <GainLossTab
+                            api={api}
+                            flash={flash}
+                            companyNames={companyNames}
+                        />
+                    ) : null}
+
                     {activeTab === 'reports' ? (
                         <ReportsTab
                             api={api}
                             flash={flash}
+                            filters={reportFilters}
+                            setFilters={setReportFilters}
+                            isClientMode={connectionStatus.isClientMode}
                         />
                     ) : null}
 

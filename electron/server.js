@@ -84,6 +84,11 @@ export function createSyncServer(repository, photosDir, uiDir) {
       'suppliers:delete':     (p) => repository.deleteSupplier(p),
       'suppliers:bulkDelete': (p) => repository.bulkDeleteSuppliers(p),
 
+      'fct:list':       (p) => repository.listForeignCurrencyTransactions(p),
+      'fct:save':       (p) => repository.saveForeignCurrencyTransaction(p),
+      'fct:delete':     (p) => repository.deleteForeignCurrencyTransaction(p),
+      'fct:bulkDelete': (p) => repository.bulkDeleteForeignCurrencyTransactions(p),
+
       'sales:list':       (p) => repository.listSales(p),
       'sales:save':       (p) => repository.saveSale(p),
       'sales:delete':     (p) => repository.deleteSale(p),
@@ -108,6 +113,12 @@ export function createSyncServer(repository, photosDir, uiDir) {
         return repository.importSalesFromExcel(p.filePath, p.selectedSheetNames);
       },
       'sales:importCsv': (p) => repository.importSalesFromCsv(p.csvContent),
+      'sales:exportExcel':             (p) => repository.exportSalesToExcel(p?.filePath),
+      'reports:exportFinancialStatementExcel': (p) => repository.exportFinancialStatementToExcel(p?.filePath, p?.filters),
+      'app:exportFullExcel':           (p) => repository.exportFullToExcel(p?.filePath),
+      'products:exportExcel':          (p) => repository.exportProductsToExcel(p?.filePath),
+      'purchases:exportExcel':         (p) => repository.exportPurchasesToExcel(p?.filePath),
+      'customers:exportExcel':         (p) => repository.exportCustomersToExcel(p?.filePath),
     };
 
     return handlers[channel] || null;
@@ -120,15 +131,13 @@ export function createSyncServer(repository, photosDir, uiDir) {
     'suppliers:save', 'suppliers:delete', 'suppliers:bulkDelete',
     'sales:save', 'sales:delete', 'sales:bulkDelete', 'sales:importCsv', 'sales:importExcel',
     'purchases:save', 'purchases:delete', 'purchases:bulkDelete',
+    'fct:save', 'fct:delete', 'fct:bulkDelete',
   ]);
 
   // Channels that should NOT be served over network
   const LOCAL_ONLY_CHANNELS = new Set([
     'app:saveFileDialog', 'app:openFileDialog', 'app:writeFile', 'app:readFile',
     'app:openPath', 'app:openDataFolder',
-    'sales:exportExcel', 'products:exportExcel', 'purchases:exportExcel',
-    'customers:exportExcel',
-    'app:exportFullExcel', 'reports:exportFinancialStatementExcel',
     'products:uploadPhoto',
   ]);
 
@@ -167,7 +176,7 @@ export function createSyncServer(repository, photosDir, uiDir) {
   });
 
   // Single RPC endpoint — mirrors all IPC handlers
-  app.post('/api/rpc', (req, res) => {
+  app.post('/api/rpc', async (req, res) => {
     const { channel, payload } = req.body;
 
     if (!channel) {
@@ -184,7 +193,7 @@ export function createSyncServer(repository, photosDir, uiDir) {
     }
 
     try {
-      const result = handler(payload);
+      const result = await handler(payload);
 
       // Broadcast change for write operations
       if (WRITE_CHANNELS.has(channel)) {
@@ -204,8 +213,8 @@ export function createSyncServer(repository, photosDir, uiDir) {
     start(port = 3847) {
       return new Promise((resolve, reject) => {
         server = http.createServer(app);
-        server.listen(port, '0.0.0.0', () => {
-          console.log(`[sync-server] Listening on 0.0.0.0:${port}`);
+        server.listen(port, () => {
+          console.log(`[sync-server] Listening on wildcard port ${port}`);
           resolve(port);
         });
         server.on('error', (err) => {
@@ -249,7 +258,7 @@ export function getLanIpAddress() {
   const interfaces = os.networkInterfaces();
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) {
+      if ((iface.family === 'IPv4' || iface.family === 4) && !iface.internal) {
         return iface.address;
       }
     }

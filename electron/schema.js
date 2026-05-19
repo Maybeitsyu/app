@@ -13,7 +13,8 @@ export function requiredTables() {
     'batches',
     'purchases',
     'purchase_items',
-    'app_settings'
+    'app_settings',
+    'foreign_currency_transactions'
   ];
 }
 
@@ -173,6 +174,18 @@ export function initializeSchema(db) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS foreign_currency_transactions (
+      id TEXT PRIMARY KEY,
+      company_name TEXT NOT NULL DEFAULT '${defaultCompany}',
+      date TEXT NOT NULL,
+      voucher_no TEXT NOT NULL DEFAULT '',
+      supplier_name TEXT NOT NULL,
+      amount_paid REAL NOT NULL DEFAULT 0,
+      landed_cost REAL NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_products_code ON products(code);
     CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);
     CREATE INDEX IF NOT EXISTS idx_customers_name ON customers(name);
@@ -186,6 +199,8 @@ export function initializeSchema(db) {
     CREATE INDEX IF NOT EXISTS idx_purchases_date ON purchases(date);
     CREATE INDEX IF NOT EXISTS idx_purchases_category ON purchases(expense_category);
     CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase_id ON purchase_items(purchase_id);
+    CREATE INDEX IF NOT EXISTS idx_fct_date ON foreign_currency_transactions(date);
+    CREATE INDEX IF NOT EXISTS idx_fct_company ON foreign_currency_transactions(company_name);
 
   `);
 
@@ -282,6 +297,27 @@ export function initializeSchema(db) {
       )
     `);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_suppliers_name ON suppliers(name)`);
+  } catch (error) {
+    // Table might already exist, ignore
+  }
+
+  // Add foreign_currency_transactions table if it doesn't exist (migration for existing databases)
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS foreign_currency_transactions (
+        id TEXT PRIMARY KEY,
+        company_name TEXT NOT NULL DEFAULT '${defaultCompany}',
+        date TEXT NOT NULL,
+        voucher_no TEXT NOT NULL DEFAULT '',
+        supplier_name TEXT NOT NULL,
+        amount_paid REAL NOT NULL DEFAULT 0,
+        landed_cost REAL NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_fct_date ON foreign_currency_transactions(date)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_fct_company ON foreign_currency_transactions(company_name)`);
   } catch (error) {
     // Table might already exist, ignore
   }

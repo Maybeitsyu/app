@@ -247,6 +247,24 @@ function registerIpcHandlers() {
   });
 
 
+  // ── Foreign Currency Transactions ──
+  ipcMain.handle('fct:list', (_, filters) => repository.listForeignCurrencyTransactions(filters));
+  ipcMain.handle('fct:save', (_, payload) => {
+    const res = repository.saveForeignCurrencyTransaction(payload);
+    syncServer?.broadcastChange('fct:save');
+    return res;
+  });
+  ipcMain.handle('fct:delete', (_, id) => {
+    const res = repository.deleteForeignCurrencyTransaction(id);
+    syncServer?.broadcastChange('fct:delete');
+    return res;
+  });
+  ipcMain.handle('fct:bulkDelete', (_, ids) => {
+    const res = repository.bulkDeleteForeignCurrencyTransactions(ids);
+    syncServer?.broadcastChange('fct:bulkDelete');
+    return res;
+  });
+
   // ── Sync Server IPC ──
   ipcMain.handle('sync:getServerInfo', () => {
     return {
