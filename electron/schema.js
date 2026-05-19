@@ -44,6 +44,7 @@ export function initializeSchema(db) {
       is_vat_exempt INTEGER NOT NULL DEFAULT 0,
       reorder_point REAL NOT NULL DEFAULT ${DEFAULT_REORDER_POINT},
       photo_path TEXT NOT NULL DEFAULT '',
+      is_hidden INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -320,5 +321,12 @@ export function initializeSchema(db) {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_fct_company ON foreign_currency_transactions(company_name)`);
   } catch (error) {
     // Table might already exist, ignore
+  }
+
+  // Add is_hidden column if it doesn't exist (for migration)
+  try {
+    db.exec(`ALTER TABLE products ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0`);
+  } catch (error) {
+    // Column might already exist, ignore
   }
 }

@@ -762,7 +762,8 @@ function blankProductForm() {
         stock_qty: '0',
         is_vat_exempt: false,
         reorder_point: '10',
-        photo_path: ''
+        photo_path: '',
+        is_hidden: false
     };
 }
 
@@ -901,7 +902,8 @@ function productToForm(product) {
         stock_qty: String(product.stockQty ?? 0),
         is_vat_exempt: Boolean(product.isVatExempt),
         reorder_point: String(product.reorderPoint ?? 10),
-        photo_path: product.photoPath ?? ''
+        photo_path: product.photoPath ?? '',
+        is_hidden: Boolean(product.isHidden)
     };
 }
 
@@ -1794,6 +1796,7 @@ function ProductsTab({
     onEdit,
     onDelete,
     onBulkDelete,
+    onBulkToggleVisibility,
     onCreateNew,
     onSplit,
     onReorderProduct,
@@ -1806,6 +1809,7 @@ function ProductsTab({
     const [retailFilter, setRetailFilter] = useState('all');
     const [activeCustomerId, setActiveCustomerId] = useState(null);
     const [sortConfig, setSortConfig] = useState({ key: 'name', direction: 'asc' });
+    const [showHidden, setShowHidden] = useState(false);
 
     // Pagination state
     const [currentPage, setCurrentPage] = useState(1);
@@ -1828,6 +1832,7 @@ function ProductsTab({
 
     const filteredProducts = useMemo(() => {
         return products.filter((product) => {
+            if (!showHidden && product.isHidden) return false;
             const matchesCategory = categoryFilter === 'all' || product.category === categoryFilter;
             const matchesRetail = retailFilter === 'all' || (retailFilter === 'retail' ? product.isRetail : !product.isRetail);
             const query = search.trim().toLowerCase();
@@ -1837,7 +1842,7 @@ function ProductsTab({
                 .includes(query);
             return matchesCategory && matchesRetail && matchesSearch;
         });
-    }, [products, categoryFilter, retailFilter, search]);
+    }, [products, categoryFilter, retailFilter, search, showHidden]);
 
     const sortedProducts = useMemo(() => {
         return [...filteredProducts].sort((a, b) => {
@@ -1859,7 +1864,7 @@ function ProductsTab({
 
     useEffect(() => {
         setCurrentPage(1);
-    }, [search, pageSize, categoryFilter, retailFilter]);
+    }, [search, pageSize, categoryFilter, retailFilter, showHidden]);
 
     const paginatedProducts = useMemo(() => {
         const start = (currentPage - 1) * pageSize;
@@ -1921,6 +1926,14 @@ function ProductsTab({
                                 <option key={c} value={c}>{c}</option>
                             ))}
                         </select>
+                        <label className="select-all-wrap" style={{ borderRight: 'none', marginRight: 0, height: '36px' }}>
+                            <input
+                                type="checkbox"
+                                checked={showHidden}
+                                onChange={(e) => setShowHidden(e.target.checked)}
+                            />
+                            <span>Show Hidden</span>
+                        </label>
                         <input
                             className="input input-compact"
                             placeholder="Search products..."
@@ -1943,6 +1956,26 @@ function ProductsTab({
                                     />
                                     <span>Select all</span>
                                 </label>
+                                <button
+                                    className="button secondary"
+                                    type="button"
+                                    onClick={() => {
+                                        onBulkToggleVisibility(selectedIds, true);
+                                        setSelectedIds([]);
+                                    }}
+                                >
+                                    Hide ({selectedIds.length})
+                                </button>
+                                <button
+                                    className="button secondary"
+                                    type="button"
+                                    onClick={() => {
+                                        onBulkToggleVisibility(selectedIds, false);
+                                        setSelectedIds([]);
+                                    }}
+                                >
+                                    Unhide ({selectedIds.length})
+                                </button>
                                 <button
                                     className="button danger"
                                     type="button"
@@ -3133,7 +3166,7 @@ function SalesTab({
                                         <div className="summary-grid">
                                             <MetricCard label="Gross" value={formatCurrency(preview.grossAmount)} tone="primary" />
                                             <MetricCard label="Output VAT" value={formatCurrency(preview.outputVat)} tone="warning" />
-                                            <MetricCard label="Input VAT" value={formatCurrency(preview.inputVat)} tone="info" />
+                                            <MetricCard label="Net of Vat:" value={formatCurrency(preview.inputVat)} tone="info" />
                                             <MetricCard label="Profit" value={formatCurrency(preview.profit)} tone="success" />
                                         </div>
                                         <div className="preview-breakdown">
@@ -3989,10 +4022,10 @@ function PurchasesTab({
                                                     title="Create new supplier"
                                                     style={{ padding: '0 12px', minHeight: '38px', borderRadius: '12px', flexShrink: 0 }}
                                                     onClick={() => onCreateSupplier('')}
-                                                 >
-                                                     ＋
-                                                 </button>
-                                             </div>
+                                                >
+                                                    ＋
+                                                </button>
+                                            </div>
                                         </label>
                                         <label className="field">
                                             <span>RECEIPT # <span style={{ color: 'var(--danger)' }}>*</span></span>
@@ -6488,6 +6521,25 @@ export default function App() {
         );
     }
 
+    async function handleProductBulkToggleVisibility(ids, hide) {
+        try {
+            flash(hide ? 'Hiding selected products...' : 'Unhiding selected products...', 'neutral');
+            for (const id of ids) {
+                const product = products.find(p => p.id === id);
+                if (product) {
+                    await api.products.save({
+                        ...productToForm(product),
+                        is_hidden: hide
+                    });
+                }
+            }
+            flash(hide ? `${ids.length} products hidden.` : `${ids.length} products unhidden.`, 'success');
+            await loadWorkspace();
+        } catch (error) {
+            flash(error.message || 'Failed to update products visibility.', 'error');
+        }
+    }
+
     async function handleCustomerBulkDelete(ids) {
         showConfirmDialog(
             'Delete Multiple Customers?',
@@ -7545,6 +7597,7 @@ export default function App() {
                             onEdit={handleEditProduct}
                             onDelete={handleProductDelete}
                             onBulkDelete={handleProductBulkDelete}
+                            onBulkToggleVisibility={handleProductBulkToggleVisibility}
                             onCreateNew={handleStartProductForm}
                             onSplit={handleSplitProduct}
                             onReorderProduct={handleReorderProduct}
@@ -7624,7 +7677,7 @@ export default function App() {
                                 const codeSuggestion = cleanName
                                     ? cleanName.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase() + '-' + Math.floor(1000 + Math.random() * 9000)
                                     : 'PRD-' + Math.floor(1000 + Math.random() * 9000);
-                                
+
                                 setProductForm({
                                     ...blankProductForm(),
                                     name: cleanName,
@@ -8169,6 +8222,14 @@ export default function App() {
                                         onChange={(event) => setProductForm({ ...productForm, is_vat_exempt: event.target.checked })}
                                     />
                                     <span>VAT exempt</span>
+                                </label>
+                                <label className="field checkbox-field compact">
+                                    <input
+                                        type="checkbox"
+                                        checked={productForm.is_hidden}
+                                        onChange={(event) => setProductForm({ ...productForm, is_hidden: event.target.checked })}
+                                    />
+                                    <span>Hide from catalog & search</span>
                                 </label>
                             </div>
                             <div className="form-actions">

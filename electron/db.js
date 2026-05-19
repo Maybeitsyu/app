@@ -298,6 +298,7 @@ function serializeProduct(row) {
     reorderPoint: roundMoney(row.reorder_point),
     photoPath: row.photo_path,
     lowStock: stock <= roundMoney(row.reorder_point),
+    isHidden: Boolean(row.is_hidden),
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -958,6 +959,7 @@ function upsertProduct(db, payload = {}) {
 
   const isVatExempt = asBoolean(payload.is_vat_exempt ?? payload.isVatExempt);
   const reorderPoint = roundMoney(payload.reorder_point ?? payload.reorderPoint ?? DEFAULT_REORDER_POINT);
+  const isHidden = asBoolean(payload.is_hidden ?? payload.isHidden);
 
   if (!code) {
     throw new Error('Product code is required.');
@@ -991,11 +993,11 @@ function upsertProduct(db, payload = {}) {
       `
         INSERT INTO products (
           id, code, name, description, category, unit, cost, average_cost, srp,
-          sack_weight_kg, price_per_kg, labor_cost, packaging_cost, stock_qty, is_vat_exempt, reorder_point, photo_path, created_at, updated_at
+          sack_weight_kg, price_per_kg, labor_cost, packaging_cost, stock_qty, is_vat_exempt, reorder_point, photo_path, is_hidden, created_at, updated_at
         )
         VALUES (
           @id, @code, @name, @description, @category, @unit, @cost, @average_cost, @srp,
-          @sack_weight_kg, @price_per_kg, @labor_cost, @packaging_cost, 0, @is_vat_exempt, @reorder_point, @photo_path, @created_at, @updated_at
+          @sack_weight_kg, @price_per_kg, @labor_cost, @packaging_cost, 0, @is_vat_exempt, @reorder_point, @photo_path, @is_hidden, @created_at, @updated_at
         )
         ON CONFLICT(id) DO UPDATE SET
           code = excluded.code,
@@ -1014,6 +1016,7 @@ function upsertProduct(db, payload = {}) {
           is_vat_exempt = excluded.is_vat_exempt,
           reorder_point = excluded.reorder_point,
           photo_path = excluded.photo_path,
+          is_hidden = excluded.is_hidden,
           updated_at = excluded.updated_at
       `
     ).run({
@@ -1033,6 +1036,7 @@ function upsertProduct(db, payload = {}) {
       is_vat_exempt: isVatExempt ? 1 : 0,
       reorder_point: reorderPoint,
       photo_path: photoPath,
+      is_hidden: isHidden ? 1 : 0,
       created_at: stamp,
       updated_at: stamp
     });
