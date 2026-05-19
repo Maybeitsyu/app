@@ -24,9 +24,10 @@ function createLocalId(prefix = 'id') {
     return `${prefix}-${token}`;
 }
 
-function ProductSearchSelect({ products, value, onChange, placeholder = "Choose a product" }) {
+function ProductSearchSelect({ products, value, onChange, onCreateNew, placeholder = "Choose a product" }) {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState('');
+    const [creating, setCreating] = useState(false);
     const wrapperRef = useRef(null);
     const inputRef = useRef(null);
 
@@ -39,6 +40,11 @@ function ProductSearchSelect({ products, value, onChange, placeholder = "Choose 
             p.code.toLowerCase().includes(q)
         ).slice(0, 50);
     }, [products, search]);
+
+    const searchTrimmed = search.trim();
+    const canQuickAdd = onCreateNew && searchTrimmed.length > 0 && !products.some(
+        p => p.name.toLowerCase() === searchTrimmed.toLowerCase()
+    );
 
     useEffect(() => {
         function handleClickOutside(event) {
@@ -64,6 +70,19 @@ function ProductSearchSelect({ products, value, onChange, placeholder = "Choose 
         setIsOpen(false);
     };
 
+    const handleQuickAdd = async () => {
+        if (!searchTrimmed || creating) return;
+        setCreating(true);
+        try {
+            await onCreateNew(searchTrimmed);
+            setIsOpen(false);
+        } catch (err) {
+            console.error('Failed to trigger product creation modal:', err);
+        } finally {
+            setCreating(false);
+        }
+    };
+
     return (
         <div className="search-select-wrapper" ref={wrapperRef}>
             <div className="search-select-trigger" onClick={handleToggle}>
@@ -84,7 +103,14 @@ function ProductSearchSelect({ products, value, onChange, placeholder = "Choose 
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                             onKeyDown={(e) => {
-                                if (e.key === 'Escape') setIsOpen(false);
+                                if (e.key === 'Escape') {
+                                    setIsOpen(false);
+                                }
+                                if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    if (canQuickAdd) handleQuickAdd();
+                                }
                             }}
                         />
                     </div>
@@ -109,7 +135,24 @@ function ProductSearchSelect({ products, value, onChange, placeholder = "Choose 
                                 </div>
                             ))
                         ) : (
-                            <div className="search-select-empty">No products found.</div>
+                            searchTrimmed !== '' && !canQuickAdd && <div className="search-select-empty">No products found.</div>
+                        )}
+                        {canQuickAdd && (
+                            <div
+                                className="search-select-item"
+                                style={{
+                                    borderTop: filtered.length > 0 ? '1px solid var(--border)' : 'none',
+                                    color: 'var(--primary)',
+                                    fontWeight: 600,
+                                    gap: '8px',
+                                    opacity: creating ? 0.6 : 1,
+                                    cursor: creating ? 'not-allowed' : 'pointer'
+                                }}
+                                onClick={handleQuickAdd}
+                            >
+                                <span style={{ fontSize: '1.1em' }}>＋</span>
+                                <span>{creating ? 'Saving...' : `Add "${searchTrimmed}" as new product`}</span>
+                            </div>
                         )}
                     </div>
                 </div>
@@ -483,8 +526,12 @@ function SupplierSearchSelect({ suppliers, value, onChange, onCreateNew, placeho
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                             onKeyDown={(e) => {
-                                if (e.key === 'Escape') setIsOpen(false);
+                                if (e.key === 'Escape') {
+                                    setIsOpen(false);
+                                }
                                 if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    e.stopPropagation();
                                     if (canQuickAdd) handleQuickAdd();
                                     else if (filtered.length > 0) handleSelect(filtered[0]);
                                     else handleSelect(null);
@@ -633,8 +680,14 @@ function CustomerSearchSelect({ customers, value, onChange, onCreateNew, placeho
                             value={search}
                             onChange={(e) => setSearch(e.target.value)}
                             onKeyDown={(e) => {
-                                if (e.key === 'Escape') setIsOpen(false);
-                                if (e.key === 'Enter' && canQuickAdd) handleQuickAdd();
+                                if (e.key === 'Escape') {
+                                    setIsOpen(false);
+                                }
+                                if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    if (canQuickAdd) handleQuickAdd();
+                                }
                             }}
                         />
                     </div>
@@ -1738,23 +1791,16 @@ function ProductsTab({
     products,
     search,
     setSearch,
-    showForm,
-    form,
-    setForm,
-    onSubmit,
-    onUploadPhoto,
     onEdit,
     onDelete,
     onBulkDelete,
     onCreateNew,
-    onCancel,
     onSplit,
     onReorderProduct,
     onExport,
     onImport
 }) {
     const [selectedIds, setSelectedIds] = useState([]);
-    const [showAdvancedProductFields, setShowAdvancedProductFields] = useState(false);
     const [activeProductId, setActiveProductId] = useState(null);
     const [categoryFilter, setCategoryFilter] = useState('all');
     const [retailFilter, setRetailFilter] = useState('all');
@@ -1764,23 +1810,9 @@ function ProductsTab({
     // Pagination state
     const [currentPage, setCurrentPage] = useState(1);
     const [pageSize, setPageSize] = useState(50);
-    const productCodeInputRef = useRef(null);
     const gridRef = useRef(null);
 
     const allCategories = Array.from(new Set([...productCategories, ...products.map(p => (p.category || '').trim())])).sort().filter(Boolean);
-    const isCustomCategory = form.category && !allCategories.includes(form.category);
-    const defaultUnits = ['pc', 'bag', 'kg', 'box', 'bottle', 'can', 'sack', 'unit', 'set', 'roll'];
-    const allUnits = Array.from(new Set([...defaultUnits, ...products.map(p => (p.unit || '').trim())])).sort().filter(Boolean);
-    const isCustomUnit = form.unit && !allUnits.includes(form.unit);
-
-    useEffect(() => {
-        if (showForm && productCodeInputRef.current) {
-            // Use requestAnimationFrame to ensure focus happens after render
-            requestAnimationFrame(() => {
-                productCodeInputRef.current?.focus();
-            });
-        }
-    }, [showForm]);
 
     useEffect(() => {
         function handleClickOutside(event) {
@@ -1836,229 +1868,6 @@ function ProductsTab({
 
     return (
         <div className="stack">
-            {/* ── Modal overlay for add / edit ── */}
-            {showForm ? (
-                <div className="modal-backdrop">
-                    <div className="modal-box">
-                        <div className="modal-header">
-                            <h3 className="modal-title">{form.id ? 'Edit product' : 'Add product'}</h3>
-                            <button className="modal-close" type="button" onClick={onCancel} aria-label="Close">✕</button>
-                        </div>
-                        <form className="product-form form-stack" onSubmit={onSubmit}>
-                            <div className="field-grid">
-                                <label className="field">
-                                    <span>Product code <span style={{ color: 'var(--danger)' }}>*</span></span>
-                                    <input
-                                        ref={productCodeInputRef}
-                                        className="input"
-                                        placeholder="e.g. PRD001"
-                                        maxLength={50}
-                                        value={form.code}
-                                        onChange={(event) => setForm({ ...form, code: event.target.value })}
-                                    />
-                                </label>
-                                <label className="field">
-                                    <span>Product name <span style={{ color: 'var(--danger)' }}>*</span></span>
-                                    <input
-                                        className="input"
-                                        placeholder="e.g. Milk Powder"
-                                        maxLength={100}
-                                        value={form.name}
-                                        onChange={(event) => setForm({ ...form, name: event.target.value })}
-                                    />
-                                </label>
-                                <label className="field span-2">
-                                    <span>Description (optional)</span>
-                                    <textarea
-                                        className="textarea"
-                                        rows="3"
-                                        placeholder="Add extra details here..."
-                                        maxLength={500}
-                                        value={form.description}
-                                        onChange={(event) => setForm({ ...form, description: event.target.value })}
-                                    />
-                                </label>
-                                <div className="field">
-                                    <span>Category <span style={{ color: 'var(--danger)' }}>*</span></span>
-                                    <div className="stack" style={{ gap: '8px' }}>
-                                        <select
-                                            className="select"
-                                            value={isCustomCategory ? 'CUSTOM' : (form.category || productCategories[0])}
-                                            onChange={(e) => {
-                                                if (e.target.value === 'CUSTOM') {
-                                                    setForm({ ...form, category: '' });
-                                                } else {
-                                                    setForm({ ...form, category: e.target.value });
-                                                }
-                                            }}
-                                        >
-                                            {allCategories.map((c) => (
-                                                <option key={c} value={c}>{c}</option>
-                                            ))}
-                                            <option value="CUSTOM">+ Add custom...</option>
-                                        </select>
-                                        {(isCustomCategory || form.category === '' || !allCategories.includes(form.category)) && (
-                                            <input
-                                                className="input"
-                                                placeholder="Type category name..."
-                                                value={form.category}
-                                                onChange={(e) => setForm({ ...form, category: e.target.value })}
-                                                autoFocus
-                                            />
-                                        )}
-                                    </div>
-                                </div>
-                                <div className="field">
-                                    <span>Unit <span style={{ color: 'var(--danger)' }}>*</span></span>
-                                    <div className="stack" style={{ gap: '8px' }}>
-                                        <select
-                                            className="select"
-                                            value={isCustomUnit ? 'CUSTOM' : (form.unit || 'pc')}
-                                            onChange={(e) => {
-                                                if (e.target.value === 'CUSTOM') {
-                                                    setForm({ ...form, unit: '' });
-                                                } else {
-                                                    setForm({ ...form, unit: e.target.value });
-                                                }
-                                            }}
-                                        >
-                                            {allUnits.map((u) => (
-                                                <option key={u} value={u}>{u}</option>
-                                            ))}
-                                            <option value="CUSTOM">+ Add custom...</option>
-                                        </select>
-                                        {(isCustomUnit || form.unit === '' || !allUnits.includes(form.unit)) && (
-                                            <input
-                                                className="input"
-                                                placeholder="Type unit name..."
-                                                value={form.unit}
-                                                onChange={(e) => setForm({ ...form, unit: e.target.value })}
-                                                autoFocus
-                                            />
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                            <div className="field-grid">
-                                <label className="field">
-                                    <span>Cost <span style={{ color: 'var(--danger)' }}>*</span></span>
-                                    <input
-                                        className="input"
-                                        type="number"
-                                        value={form.cost}
-                                        onChange={(event) => setForm({ ...form, cost: event.target.value })}
-                                    />
-                                </label>
-                                <label className="field">
-                                    <span>SRP <span style={{ color: 'var(--danger)' }}>*</span></span>
-                                    <input
-                                        className="input"
-                                        type="number"
-                                        value={form.srp}
-                                        onChange={(event) => setForm({ ...form, srp: event.target.value })}
-                                    />
-                                </label>
-                                <label className="field">
-                                    <span>Stock quantity <span style={{ color: 'var(--danger)' }}>*</span></span>
-                                    <input
-                                        className="input"
-                                        type="number"
-                                        value={form.stock_qty}
-                                        onChange={(event) => setForm({ ...form, stock_qty: event.target.value })}
-                                    />
-                                </label>
-                                <label className="field">
-                                    <span>Reorder point <span style={{ color: 'var(--danger)' }}>*</span></span>
-                                    <input
-                                        className="input"
-                                        type="number"
-                                        value={form.reorder_point}
-                                        onChange={(event) => setForm({ ...form, reorder_point: event.target.value })}
-                                    />
-                                </label>
-                                <label className="field">
-                                    <span>Stock value (Cost × Qty)</span>
-                                    <input
-                                        className="input"
-                                        readOnly
-                                        value={formatCurrency((parseFloat(form.cost) || 0) * (parseFloat(form.stock_qty) || 0))}
-                                        style={{ background: '#f8f9fa', fontWeight: 'bold' }}
-                                    />
-                                </label>
-                            </div>
-                            <button
-                                className="button secondary"
-                                type="button"
-                                onClick={() => setShowAdvancedProductFields(!showAdvancedProductFields)}
-                            >
-                                {showAdvancedProductFields ? 'Hide advanced options' : 'Show advanced options'}
-                            </button>
-                            {showAdvancedProductFields ? (
-                                <div className="field-grid">
-                                    <label className="field">
-                                        <span>Sack weight (kg) (optional)</span>
-                                        <input
-                                            className="input"
-                                            type="number"
-                                            value={form.sack_weight_kg}
-                                            onChange={(event) => setForm({ ...form, sack_weight_kg: event.target.value })}
-                                        />
-                                    </label>
-                                    <label className="field">
-                                        <span>Price per kg (optional)</span>
-                                        <input
-                                            className="input"
-                                            type="number"
-                                            value={form.price_per_kg}
-                                            onChange={(event) => setForm({ ...form, price_per_kg: event.target.value })}
-                                        />
-                                    </label>
-                                </div>
-                            ) : null}
-                            <div className="field-grid">
-                                <label className="field">
-                                    <span>Upload image</span>
-                                    <div className="file-upload">
-                                        <label className="upload-button">
-                                            Choose image
-                                            <input
-                                                className="file-input"
-                                                type="file"
-                                                accept="image/*"
-                                                onChange={onUploadPhoto}
-                                            />
-                                        </label>
-                                        {form.photo_path ? (
-                                            <div className="photo-preview">
-                                                <img src={window.agriLedger.sync.resolvePhotoUrl(form.photo_path)} alt="Preview" />
-                                            </div>
-                                        ) : (
-                                            <span className="muted">No image selected yet</span>
-                                        )}
-                                    </div>
-                                </label>
-                                <label className="field checkbox-field compact">
-                                    <input
-                                        type="checkbox"
-                                        checked={form.is_vat_exempt}
-                                        onChange={(event) => setForm({ ...form, is_vat_exempt: event.target.checked })}
-                                    />
-                                    <span>VAT exempt</span>
-                                </label>
-                            </div>
-                            <div className="form-actions">
-                                <button className="button primary" type="submit">
-                                    {form.id ? 'Update product' : 'Save product'}
-                                </button>
-                                <button className="button secondary" type="button" onClick={onCancel}>
-                                    Cancel
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            ) : null}
-
             <Panel
                 title="Product catalog"
                 subtitle={`${filteredProducts.length} of ${products.length} products shown`}
@@ -2772,7 +2581,8 @@ function SalesTab({
     onExport,
     onImport,
     onUpdateStatus,
-    onCreateCustomer
+    onCreateCustomer,
+    onCreateProduct
 }) {
     const [selectedIds, setSelectedIds] = useState([]);
     const [activeSaleId, setActiveSaleId] = useState(null);
@@ -2999,12 +2809,25 @@ function SalesTab({
                                     </label>
                                     <label className="field">
                                         <span>Customer (optional)</span>
-                                        <CustomerSearchSelect
-                                            customers={customers}
-                                            value={form.customer_id}
-                                            onChange={(val) => setForm({ ...form, customer_id: val })}
-                                            onCreateNew={onCreateCustomer}
-                                        />
+                                        <div className="stack-h" style={{ gap: '6px', alignItems: 'stretch' }}>
+                                            <div style={{ flex: 1 }}>
+                                                <CustomerSearchSelect
+                                                    customers={customers}
+                                                    value={form.customer_id}
+                                                    onChange={(val) => setForm({ ...form, customer_id: val })}
+                                                    onCreateNew={onCreateCustomer}
+                                                />
+                                            </div>
+                                            <button
+                                                className="button secondary"
+                                                type="button"
+                                                title="Create new customer"
+                                                style={{ padding: '0 12px', minHeight: '38px', borderRadius: '12px', flexShrink: 0 }}
+                                                onClick={() => onCreateCustomer('')}
+                                            >
+                                                ＋
+                                            </button>
+                                        </div>
                                     </label>
                                     <label className="field">
                                         <span>Company <span style={{ color: 'var(--danger)' }}>*</span></span>
@@ -3154,11 +2977,25 @@ function SalesTab({
                                                 <div className="field-grid sale-line-grid" style={{ gridTemplateColumns: 'repeat(12, minmax(0, 1fr))' }}>
                                                     <label className="field" style={{ gridColumn: 'span 5' }}>
                                                         <span>Product <span style={{ color: 'var(--danger)' }}>*</span></span>
-                                                        <ProductSearchSelect
-                                                            products={products}
-                                                            value={item.product_id}
-                                                            onChange={(val) => selectProduct(index, val)}
-                                                        />
+                                                        <div className="stack-h" style={{ gap: '6px', alignItems: 'stretch' }}>
+                                                            <div style={{ flex: 1 }}>
+                                                                <ProductSearchSelect
+                                                                    products={products}
+                                                                    value={item.product_id}
+                                                                    onChange={(val) => selectProduct(index, val)}
+                                                                    onCreateNew={(name) => onCreateProduct(index, name)}
+                                                                />
+                                                            </div>
+                                                            <button
+                                                                className="button secondary"
+                                                                type="button"
+                                                                title="Create new product"
+                                                                style={{ padding: '0 12px', minHeight: '38px', borderRadius: '12px', flexShrink: 0 }}
+                                                                onClick={() => onCreateProduct(index, '')}
+                                                            >
+                                                                ＋
+                                                            </button>
+                                                        </div>
                                                     </label>
                                                     <label className="field" style={{ gridColumn: 'span 2' }}>
                                                         <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
@@ -3985,17 +3822,30 @@ function PurchasesTab({
                                         </label>
                                         <label className="field">
                                             <span>SUPPLIER <span style={{ color: 'var(--danger)' }}>*</span></span>
-                                            <SupplierSearchSelect
-                                                suppliers={suppliers}
-                                                value={form.supplier_name}
-                                                onChange={(name, tin, addr) => {
-                                                    const updates = { supplier_name: name };
-                                                    if (tin) updates.supplier_tin = tin;
-                                                    if (addr) updates.address = addr;
-                                                    setForm({ ...form, ...updates });
-                                                }}
-                                                onCreateNew={onCreateSupplier}
-                                            />
+                                            <div className="stack-h" style={{ gap: '6px', alignItems: 'stretch' }}>
+                                                <div style={{ flex: 1 }}>
+                                                    <SupplierSearchSelect
+                                                        suppliers={suppliers}
+                                                        value={form.supplier_name}
+                                                        onChange={(name, tin, addr) => {
+                                                            const updates = { supplier_name: name };
+                                                            if (tin) updates.supplier_tin = tin;
+                                                            if (addr) updates.address = addr;
+                                                            setForm({ ...form, ...updates });
+                                                        }}
+                                                        onCreateNew={onCreateSupplier}
+                                                    />
+                                                </div>
+                                                <button
+                                                    className="button secondary"
+                                                    type="button"
+                                                    title="Create new supplier"
+                                                    style={{ padding: '0 12px', minHeight: '38px', borderRadius: '12px', flexShrink: 0 }}
+                                                    onClick={() => onCreateSupplier('')}
+                                                >
+                                                    ＋
+                                                </button>
+                                            </div>
                                         </label>
                                         <label className="field">
                                             <span>RECEIPT # <span style={{ color: 'var(--danger)' }}>*</span></span>
@@ -4119,17 +3969,30 @@ function PurchasesTab({
                                         </label>
                                         <label className="field">
                                             <span>SUPPLIER <span style={{ color: 'var(--danger)' }}>*</span></span>
-                                            <SupplierSearchSelect
-                                                suppliers={suppliers}
-                                                value={form.supplier_name}
-                                                onChange={(name, tin, addr) => {
-                                                    const updates = { supplier_name: name };
-                                                    if (tin) updates.supplier_tin = tin;
-                                                    if (addr) updates.address = addr;
-                                                    setForm({ ...form, ...updates });
-                                                }}
-                                                onCreateNew={onCreateSupplier}
-                                            />
+                                            <div className="stack-h" style={{ gap: '6px', alignItems: 'stretch' }}>
+                                                <div style={{ flex: 1 }}>
+                                                    <SupplierSearchSelect
+                                                        suppliers={suppliers}
+                                                        value={form.supplier_name}
+                                                        onChange={(name, tin, addr) => {
+                                                            const updates = { supplier_name: name };
+                                                            if (tin) updates.supplier_tin = tin;
+                                                            if (addr) updates.address = addr;
+                                                            setForm({ ...form, ...updates });
+                                                        }}
+                                                        onCreateNew={onCreateSupplier}
+                                                    />
+                                                </div>
+                                                <button
+                                                    className="button secondary"
+                                                    type="button"
+                                                    title="Create new supplier"
+                                                    style={{ padding: '0 12px', minHeight: '38px', borderRadius: '12px', flexShrink: 0 }}
+                                                    onClick={() => onCreateSupplier('')}
+                                                 >
+                                                     ＋
+                                                 </button>
+                                             </div>
                                         </label>
                                         <label className="field">
                                             <span>RECEIPT # <span style={{ color: 'var(--danger)' }}>*</span></span>
@@ -6056,6 +5919,7 @@ export default function App() {
     const [showSupplierForm, setShowSupplierForm] = useState(false);
     const [pendingSupplierAction, setPendingSupplierAction] = useState(null);
     const [pendingCustomerAction, setPendingCustomerAction] = useState(null);
+    const [pendingProductAction, setPendingProductAction] = useState(null);
     const [showSaleForm, setShowSaleForm] = useState(false);
     const [showPurchaseForm, setShowPurchaseForm] = useState(false);
     const [saleFilters, setSaleFilters] = useState({
@@ -6087,6 +5951,16 @@ export default function App() {
     const [supplierForm, setSupplierForm] = useState(blankSupplierForm());
     const [saleForm, setSaleForm] = useState(blankSaleForm());
     const [purchaseForm, setPurchaseForm] = useState(blankPurchaseForm());
+    const [showAdvancedProductFields, setShowAdvancedProductFields] = useState(false);
+    const productCodeInputRef = useRef(null);
+
+    useEffect(() => {
+        if (showProductForm && productCodeInputRef.current) {
+            requestAnimationFrame(() => {
+                productCodeInputRef.current?.focus();
+            });
+        }
+    }, [showProductForm]);
     const [loaded, setLoaded] = useState({
         dashboard: false,
         products: false,
@@ -6547,6 +6421,11 @@ export default function App() {
             setShowProductForm(false);
             await loadWorkspace();
 
+            if (pendingProductAction && savedProduct) {
+                pendingProductAction(savedProduct);
+                setPendingProductAction(null);
+            }
+
             // Aggressively restore focus after submit
             setTimeout(() => {
                 window.focus();
@@ -6691,6 +6570,7 @@ export default function App() {
     function handleCancelProductForm() {
         setShowProductForm(false);
         setProductForm(blankProductForm());
+        setPendingProductAction(null);
     }
 
     function handleStartCustomerForm() {
@@ -7529,6 +7409,16 @@ export default function App() {
         }
     };
 
+    const allProductCategories = useMemo(() => {
+        return Array.from(new Set([...productCategories, ...products.map(p => (p.category || '').trim())])).sort().filter(Boolean);
+    }, [products]);
+    const isCustomCategory = productForm.category && !allProductCategories.includes(productForm.category);
+    const defaultUnits = ['pc', 'bag', 'kg', 'box', 'bottle', 'can', 'sack', 'unit', 'set', 'roll'];
+    const allProductUnits = useMemo(() => {
+        return Array.from(new Set([...defaultUnits, ...products.map(p => (p.unit || '').trim())])).sort().filter(Boolean);
+    }, [products]);
+    const isCustomUnit = productForm.unit && !allProductUnits.includes(productForm.unit);
+
     return (
         <>
             {isSidebarOpen ? (
@@ -7652,16 +7542,10 @@ export default function App() {
                             products={products}
                             search={productSearch}
                             setSearch={setProductSearch}
-                            showForm={showProductForm}
-                            form={productForm}
-                            setForm={setProductForm}
-                            onSubmit={handleProductSubmit}
-                            onUploadPhoto={handleProductPhotoUpload}
                             onEdit={handleEditProduct}
                             onDelete={handleProductDelete}
                             onBulkDelete={handleProductBulkDelete}
                             onCreateNew={handleStartProductForm}
-                            onCancel={handleCancelProductForm}
                             onSplit={handleSplitProduct}
                             onReorderProduct={handleReorderProduct}
                             onExport={handleExportProducts}
@@ -7733,6 +7617,38 @@ export default function App() {
                                         ...prev,
                                         customer_id: newCustomer.id
                                     }));
+                                });
+                            }}
+                            onCreateProduct={async (index, name) => {
+                                const cleanName = name.trim();
+                                const codeSuggestion = cleanName
+                                    ? cleanName.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toUpperCase() + '-' + Math.floor(1000 + Math.random() * 9000)
+                                    : 'PRD-' + Math.floor(1000 + Math.random() * 9000);
+                                
+                                setProductForm({
+                                    ...blankProductForm(),
+                                    name: cleanName,
+                                    code: codeSuggestion
+                                });
+                                setShowAdvancedProductFields(false);
+                                setShowProductForm(true);
+                                setPendingProductAction(() => (newProduct) => {
+                                    setSaleForm(prev => {
+                                        const nextItems = [...prev.items];
+                                        const currentItem = nextItems[index];
+                                        nextItems[index] = {
+                                            ...currentItem,
+                                            product_id: newProduct.id,
+                                            unit: newProduct.unit || 'pc',
+                                            unit_price: String(newProduct.srp || '0'),
+                                            unit_cost: String(newProduct.average_cost || newProduct.cost || '0'),
+                                            is_vat_exempt: Boolean(newProduct.is_vat_exempt || newProduct.isVatExempt)
+                                        };
+                                        return {
+                                            ...prev,
+                                            items: nextItems
+                                        };
+                                    });
                                 });
                             }}
                             onUpdateStatus={async (saleId, newStatus) => {
@@ -8038,6 +7954,228 @@ export default function App() {
                                     {supplierForm.id ? 'Update supplier' : 'Save supplier'}
                                 </button>
                                 <button className="button secondary" type="button" onClick={handleCancelSupplierForm}>
+                                    Cancel
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {showProductForm && (
+                <div className="modal-backdrop" style={{ zIndex: 9999 }}>
+                    <div className="modal-box">
+                        <div className="modal-header">
+                            <h3 className="modal-title">{productForm.id ? 'Edit product' : 'Add product'}</h3>
+                            <button className="modal-close" type="button" onClick={handleCancelProductForm} aria-label="Close">✕</button>
+                        </div>
+                        <form className="product-form form-stack" onSubmit={handleProductSubmit}>
+                            <div className="field-grid">
+                                <label className="field">
+                                    <span>Product code <span style={{ color: 'var(--danger)' }}>*</span></span>
+                                    <input
+                                        ref={productCodeInputRef}
+                                        className="input"
+                                        placeholder="e.g. PRD001"
+                                        maxLength={50}
+                                        value={productForm.code}
+                                        onChange={(event) => setProductForm({ ...productForm, code: event.target.value })}
+                                    />
+                                </label>
+                                <label className="field">
+                                    <span>Product name <span style={{ color: 'var(--danger)' }}>*</span></span>
+                                    <input
+                                        className="input"
+                                        placeholder="e.g. Milk Powder"
+                                        maxLength={100}
+                                        value={productForm.name}
+                                        onChange={(event) => setProductForm({ ...productForm, name: event.target.value })}
+                                    />
+                                </label>
+                                <label className="field span-2">
+                                    <span>Description (optional)</span>
+                                    <textarea
+                                        className="textarea"
+                                        rows="3"
+                                        placeholder="Add extra details here..."
+                                        maxLength={500}
+                                        value={productForm.description}
+                                        onChange={(event) => setProductForm({ ...productForm, description: event.target.value })}
+                                    />
+                                </label>
+                                <div className="field">
+                                    <span>Category <span style={{ color: 'var(--danger)' }}>*</span></span>
+                                    <div className="stack" style={{ gap: '8px' }}>
+                                        <select
+                                            className="select"
+                                            value={isCustomCategory ? 'CUSTOM' : (productForm.category || productCategories[0])}
+                                            onChange={(e) => {
+                                                if (e.target.value === 'CUSTOM') {
+                                                    setProductForm({ ...productForm, category: '' });
+                                                } else {
+                                                    setProductForm({ ...productForm, category: e.target.value });
+                                                }
+                                            }}
+                                        >
+                                            {allProductCategories.map((c) => (
+                                                <option key={c} value={c}>{c}</option>
+                                            ))}
+                                            <option value="CUSTOM">+ Add custom...</option>
+                                        </select>
+                                        {(isCustomCategory || productForm.category === '' || !allProductCategories.includes(productForm.category)) && (
+                                            <input
+                                                className="input"
+                                                placeholder="Type category name..."
+                                                value={productForm.category}
+                                                onChange={(e) => setProductForm({ ...productForm, category: e.target.value })}
+                                                autoFocus
+                                            />
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="field">
+                                    <span>Unit <span style={{ color: 'var(--danger)' }}>*</span></span>
+                                    <div className="stack" style={{ gap: '8px' }}>
+                                        <select
+                                            className="select"
+                                            value={isCustomUnit ? 'CUSTOM' : (productForm.unit || 'pc')}
+                                            onChange={(e) => {
+                                                if (e.target.value === 'CUSTOM') {
+                                                    setProductForm({ ...productForm, unit: '' });
+                                                } else {
+                                                    setProductForm({ ...productForm, unit: e.target.value });
+                                                }
+                                            }}
+                                        >
+                                            {allProductUnits.map((u) => (
+                                                <option key={u} value={u}>{u}</option>
+                                            ))}
+                                            <option value="CUSTOM">+ Add custom...</option>
+                                        </select>
+                                        {(isCustomUnit || productForm.unit === '' || !allProductUnits.includes(productForm.unit)) && (
+                                            <input
+                                                className="input"
+                                                placeholder="Type unit name..."
+                                                value={productForm.unit}
+                                                onChange={(e) => setProductForm({ ...productForm, unit: e.target.value })}
+                                                autoFocus
+                                            />
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="field-grid">
+                                <label className="field">
+                                    <span>Cost <span style={{ color: 'var(--danger)' }}>*</span></span>
+                                    <input
+                                        className="input"
+                                        type="number"
+                                        value={productForm.cost}
+                                        onChange={(event) => setProductForm({ ...productForm, cost: event.target.value })}
+                                    />
+                                </label>
+                                <label className="field">
+                                    <span>SRP <span style={{ color: 'var(--danger)' }}>*</span></span>
+                                    <input
+                                        className="input"
+                                        type="number"
+                                        value={productForm.srp}
+                                        onChange={(event) => setProductForm({ ...productForm, srp: event.target.value })}
+                                    />
+                                </label>
+                                <label className="field">
+                                    <span>Stock quantity <span style={{ color: 'var(--danger)' }}>*</span></span>
+                                    <input
+                                        className="input"
+                                        type="number"
+                                        value={productForm.stock_qty}
+                                        onChange={(event) => setProductForm({ ...productForm, stock_qty: event.target.value })}
+                                    />
+                                </label>
+                                <label className="field">
+                                    <span>Reorder point <span style={{ color: 'var(--danger)' }}>*</span></span>
+                                    <input
+                                        className="input"
+                                        type="number"
+                                        value={productForm.reorder_point}
+                                        onChange={(event) => setProductForm({ ...productForm, reorder_point: event.target.value })}
+                                    />
+                                </label>
+                                <label className="field">
+                                    <span>Stock value (Cost × Qty)</span>
+                                    <input
+                                        className="input"
+                                        readOnly
+                                        value={formatCurrency((parseFloat(productForm.cost) || 0) * (parseFloat(productForm.stock_qty) || 0))}
+                                        style={{ background: '#f8f9fa', fontWeight: 'bold' }}
+                                    />
+                                </label>
+                            </div>
+                            <button
+                                className="button secondary"
+                                type="button"
+                                onClick={() => setShowAdvancedProductFields(!showAdvancedProductFields)}
+                            >
+                                {showAdvancedProductFields ? 'Hide advanced options' : 'Show advanced options'}
+                            </button>
+                            {showAdvancedProductFields ? (
+                                <div className="field-grid">
+                                    <label className="field">
+                                        <span>Sack weight (kg) (optional)</span>
+                                        <input
+                                            className="input"
+                                            type="number"
+                                            value={productForm.sack_weight_kg}
+                                            onChange={(event) => setProductForm({ ...productForm, sack_weight_kg: event.target.value })}
+                                        />
+                                    </label>
+                                    <label className="field">
+                                        <span>Price per kg (optional)</span>
+                                        <input
+                                            className="input"
+                                            type="number"
+                                            value={productForm.price_per_kg}
+                                            onChange={(event) => setProductForm({ ...productForm, price_per_kg: event.target.value })}
+                                        />
+                                    </label>
+                                </div>
+                            ) : null}
+                            <div className="field-grid">
+                                <label className="field">
+                                    <span>Upload image</span>
+                                    <div className="file-upload">
+                                        <label className="upload-button">
+                                            Choose image
+                                            <input
+                                                className="file-input"
+                                                type="file"
+                                                accept="image/*"
+                                                onChange={handleProductPhotoUpload}
+                                            />
+                                        </label>
+                                        {productForm.photo_path ? (
+                                            <div className="photo-preview">
+                                                <img src={window.agriLedger.sync.resolvePhotoUrl(productForm.photo_path)} alt="Preview" />
+                                            </div>
+                                        ) : (
+                                            <span className="muted">No image selected yet</span>
+                                        )}
+                                    </div>
+                                </label>
+                                <label className="field checkbox-field compact">
+                                    <input
+                                        type="checkbox"
+                                        checked={productForm.is_vat_exempt}
+                                        onChange={(event) => setProductForm({ ...productForm, is_vat_exempt: event.target.checked })}
+                                    />
+                                    <span>VAT exempt</span>
+                                </label>
+                            </div>
+                            <div className="form-actions">
+                                <button className="button primary" type="submit">
+                                    {productForm.id ? 'Update product' : 'Save product'}
+                                </button>
+                                <button className="button secondary" type="button" onClick={handleCancelProductForm}>
                                     Cancel
                                 </button>
                             </div>

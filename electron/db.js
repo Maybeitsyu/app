@@ -606,7 +606,7 @@ function getFinancialStatement(db, { fromDate = '', toDate = '', companyName = '
   // 1. Sales
   const salesAgg = db.prepare(`
     SELECT 
-      COALESCE(SUM(gross_amount - output_vat), 0) as total_sales
+      COALESCE(SUM(input_vat + vat_exempt_amount), 0) as total_sales
     FROM sales
     ${whereClause} AND status NOT IN ('FAILED', 'Return')
   `).get(...params);
@@ -684,8 +684,8 @@ function getDashboardSummary(db, { fromDate = '', toDate = '' } = {}) {
     .prepare(
       `
         SELECT
-          COALESCE(SUM(CASE WHEN date = ? AND status NOT IN ('FAILED', 'Return') THEN gross_amount - output_vat ELSE 0 END), 0) AS sales_today,
-          COALESCE(SUM(CASE WHEN date >= ? AND date <= ? AND status NOT IN ('FAILED', 'Return') THEN gross_amount - output_vat ELSE 0 END), 0) AS sales_period,
+          COALESCE(SUM(CASE WHEN date = ? AND status NOT IN ('FAILED', 'Return') THEN input_vat + vat_exempt_amount ELSE 0 END), 0) AS sales_today,
+          COALESCE(SUM(CASE WHEN date >= ? AND date <= ? AND status NOT IN ('FAILED', 'Return') THEN input_vat + vat_exempt_amount ELSE 0 END), 0) AS sales_period,
           COALESCE(SUM(CASE WHEN date >= ? AND date <= ? AND status NOT IN ('FAILED', 'Return') THEN profit ELSE 0 END), 0) AS profit_period,
           COALESCE(SUM(CASE WHEN date >= ? AND date <= ? AND status NOT IN ('FAILED', 'Return') THEN output_vat ELSE 0 END), 0) AS output_vat_period,
           COALESCE(SUM(CASE WHEN date >= ? AND date <= ? AND status NOT IN ('FAILED', 'Return') THEN vat_exempt_amount ELSE 0 END), 0) AS vat_exempt_sales,
@@ -2703,7 +2703,7 @@ async function exportFullReportToExcel(db, filePath) {
 
       for (let i = 0; i < salesRows.length; i++) {
         const row = salesRows[i];
-        totalSales += row.gross_amount;
+        totalSales += (row.input_vat + row.vat_exempt_amount);
         totalCost += row.total_cost;
         totalProfit += row.profit;
 
