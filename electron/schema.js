@@ -94,6 +94,7 @@ export function initializeSchema(db) {
       output_vat REAL NOT NULL DEFAULT 0,
       vat_exempt_amount REAL NOT NULL DEFAULT 0,
       costing REAL NOT NULL DEFAULT 0,
+      shipping_fee REAL NOT NULL DEFAULT 0,
       total_cost REAL NOT NULL DEFAULT 0,
       profit REAL NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL
@@ -326,6 +327,36 @@ export function initializeSchema(db) {
   // Add is_hidden column if it doesn't exist (for migration)
   try {
     db.exec(`ALTER TABLE products ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0`);
+  } catch (error) {
+    // Column might already exist, ignore
+  }
+
+  // Data fix migration for missing input_vat (applies to older imported data)
+  try {
+    db.exec(`
+      UPDATE sales
+      SET input_vat = gross_amount - output_vat, vat_exempt_amount = 0
+      WHERE input_vat = 0 AND vat_exempt_amount = 0 AND gross_amount > 0 AND output_vat > 0;
+      
+      UPDATE sales
+      SET input_vat = 0, vat_exempt_amount = gross_amount
+      WHERE input_vat = 0 AND vat_exempt_amount = 0 AND gross_amount > 0 AND output_vat = 0;
+      
+      UPDATE sale_items
+      SET input_vat = gross_amount - output_vat, vat_exempt_amount = 0
+      WHERE input_vat = 0 AND vat_exempt_amount = 0 AND gross_amount > 0 AND output_vat > 0;
+      
+      UPDATE sale_items
+      SET input_vat = 0, vat_exempt_amount = gross_amount
+      WHERE input_vat = 0 AND vat_exempt_amount = 0 AND gross_amount > 0 AND output_vat = 0;
+    `);
+  } catch (error) {
+    // Migration error
+  }
+
+  // Add shipping_fee column to sale_items if it doesn't exist (for migration)
+  try {
+    db.exec(`ALTER TABLE sale_items ADD COLUMN shipping_fee REAL NOT NULL DEFAULT 0`);
   } catch (error) {
     // Column might already exist, ignore
   }

@@ -155,6 +155,7 @@ export function calculateVatFromGross(grossAmount, vatRate = VAT_RATE) {
 export function calculateSaleLine({
   qty = 0,
   unitPrice = 0,
+  shippingFee = 0,
   unitCost = 0,
   isVatExempt = false,
   status = 'PAID',
@@ -163,8 +164,9 @@ export function calculateSaleLine({
 }) {
   const safeQty = status === 'FAILED' || status === 'Return' ? 0 : roundMoney(qty);
   const safeUnitPrice = status === 'FAILED' || status === 'Return' || status === 'Lost' ? 0 : roundMoney(unitPrice);
+  const safeShippingFee = status === 'FAILED' || status === 'Return' ? 0 : roundMoney(shippingFee);
   const safeUnitCost = roundMoney(unitCost);
-  const grossAmount = grossOverride !== null ? roundMoney(grossOverride) : roundMoney(safeQty * safeUnitPrice);
+  const grossAmount = grossOverride !== null ? roundMoney(grossOverride) : roundMoney((safeQty * safeUnitPrice) + safeShippingFee);
   const totalCost = roundMoney(safeQty * safeUnitCost);
   const vatSplit = isVatExempt || grossAmount <= 0 ? { netOfVat: grossAmount, vatAmount: 0 } : calculateVatFromGross(grossAmount, vatRate);
   const costVatSplit = isVatExempt || totalCost <= 0 ? { netOfVat: totalCost, vatAmount: 0 } : calculateVatFromGross(totalCost, vatRate);
@@ -172,6 +174,7 @@ export function calculateSaleLine({
   return {
     qty: safeQty,
     unitPrice: safeUnitPrice,
+    shippingFee: safeShippingFee,
     grossAmount,
     inputVat: isVatExempt ? 0 : vatSplit.netOfVat,
     outputVat: isVatExempt ? 0 : vatSplit.vatAmount,

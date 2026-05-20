@@ -337,7 +337,7 @@ function serializeForeignCurrencyTransaction(row) {
   const amountPaid = roundMoney(row.amount_paid);
   const landedCost = roundMoney(row.landed_cost);
   const diff = roundMoney(landedCost - amountPaid);
-  
+
   return {
     id: row.id,
     companyName: row.company_name,
@@ -456,6 +456,7 @@ function serializeSaleItem(row) {
     outputVat: roundMoney(row.output_vat),
     vatExemptAmount: roundMoney(row.vat_exempt_amount),
     costing: roundMoney(row.costing),
+    shippingFee: roundMoney(row.shipping_fee),
     totalCost: roundMoney(row.total_cost),
     profit: roundMoney(row.profit),
     createdAt: row.created_at,
@@ -2128,11 +2129,11 @@ function createSale(db, payload = {}) {
     `
       INSERT INTO sale_items (
         id, sale_id, product_id, qty, unit, unit_price, gross_amount, input_vat,
-        output_vat, vat_exempt_amount, costing, total_cost, profit, created_at
+        output_vat, vat_exempt_amount, costing, shipping_fee, total_cost, profit, created_at
       )
       VALUES (
         @id, @sale_id, @product_id, @qty, @unit, @unit_price, @gross_amount, @input_vat,
-        @output_vat, @vat_exempt_amount, @costing, @total_cost, @profit, @created_at
+        @output_vat, @vat_exempt_amount, @costing, @shipping_fee, @total_cost, @profit, @created_at
       )
     `
   );
@@ -2215,9 +2216,11 @@ function createSale(db, payload = {}) {
       const unit = cleanString(rawItem.unit) || product.unit || 'pc';
       const pricing = resolveSalePricing(product, rawItem, status);
       const isVatExempt = asBoolean(rawItem.is_vat_exempt ?? rawItem.isVatExempt, Boolean(product.is_vat_exempt));
+      const shippingFee = roundMoney(rawItem.shipping_fee ?? rawItem.shippingFee ?? 0);
       const line = calculateSaleLine({
         qty,
         unitPrice: pricing.unitPrice,
+        shippingFee,
         unitCost: pricing.unitCost,
         isVatExempt,
         status,
@@ -2264,6 +2267,7 @@ function createSale(db, payload = {}) {
           finalLine = calculateSaleLine({
             qty,
             unitPrice: finalUnitPrice,
+            shippingFee,
             unitCost: hasManualCost ? roundMoney(manualUnitCost) : weightedUnitCost,
             isVatExempt,
             status,
@@ -2298,6 +2302,7 @@ function createSale(db, payload = {}) {
         output_vat: finalLine.outputVat,
         vat_exempt_amount: finalLine.vatExemptAmount,
         costing: finalLine.costing,
+        shipping_fee: finalLine.shippingFee,
         total_cost: finalLine.totalCost,
         profit: finalLine.profit,
         created_at: stamp
@@ -3219,12 +3224,12 @@ function importSalesFromCsv(db, csvContent) {
       // 3. Create Sale (Using dynamic costing and profit calculation)
       const saleId = createId();
       const isVatExempt = row[headers.indexOf('VAT EXEMPT SALES')] ? true : false;
-      const vat = calculateSaleLine({ 
-        qty, 
-        unitPrice, 
-        unitCost: productCost, 
-        isVatExempt, 
-        vatRate 
+      const vat = calculateSaleLine({
+        qty,
+        unitPrice,
+        unitCost: productCost,
+        isVatExempt,
+        vatRate
       });
 
       db.prepare(`
@@ -3250,8 +3255,8 @@ function importSalesFromCsv(db, csvContent) {
 
       // 4. Create Sale Item
       db.prepare(`
-        INSERT INTO sale_items (id, sale_id, product_id, qty, unit, unit_price, gross_amount, input_vat, output_vat, vat_exempt_amount, costing, total_cost, profit, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO sale_items (id, sale_id, product_id, qty, unit, unit_price, gross_amount, input_vat, output_vat, vat_exempt_amount, costing, shipping_fee, total_cost, profit, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         createId(),
         saleId,
@@ -3263,7 +3268,8 @@ function importSalesFromCsv(db, csvContent) {
         vat.inputVat,
         vat.outputVat,
         vat.vatExemptAmount,
-        productCost, 
+        productCost,
+        0,
         vat.totalCost,
         vat.profit,
         nowIso()
@@ -3510,6 +3516,7 @@ async function importFullReportFromExcel(db, filePathOrData, selectedSheetNames 
           const qty = parseFloat(getValByKeys(['QTY', 'QUANTITY'])) || 0;
           const unit = getValByKeys(['UNIT']);
           const price = parseFloat(getValByKeys(['UNIT PRICE', 'UNITPRICE', 'PRICE'])) || 0;
+          const excelGross = parseFloat(getValByKeys(['GROSS AMOUNT', 'GROSSAMOUNT', 'GROSS'])) || null;
           const remarks = getValByKeys(['REMARKS', 'STATUS']) || 'PAID';
           const channel = getValByKeys(['INVOICE', 'CHANNEL']) || 'WALK IN';
           const receiptNumberRaw = getValByKeys(['RECEIPT #', 'RECEIPT#', 'RECEIPT']);
@@ -3541,35 +3548,84 @@ async function importFullReportFromExcel(db, filePathOrData, selectedSheetNames 
             finalTotalCost = roundMoney(qty * finalCosting);
           }
 
-          const isVatExempt = asBoolean(getValByKeys(['VAT EXEMPT SALES', 'VAT EXEMPT SALES ', 'VATEXEMPT']));
+          const vatExemptRaw = getValByKeys(['VAT EXEMPT SALES', 'VAT EXEMPT SALES ', 'VATEXEMPT']);
+          const vatExemptVal = typeof vatExemptRaw === 'string' 
+            ? parseFloat(vatExemptRaw.replace(/[^0-9.-]+/g, '')) 
+            : parseFloat(vatExemptRaw) || 0;
+          const isVatExempt = vatExemptVal > 0;
           const company = normalizeCompany(getValByKeys(['COMPANY']));
 
           // Calculate complete VAT, Costing, and Profit line dynamically using our core finance library
-          const vat = calculateSaleLine({ 
-            qty, 
-            unitPrice: price, 
-            unitCost: finalCosting, 
-            isVatExempt, 
-            vatRate 
+          const vat = calculateSaleLine({
+            qty,
+            unitPrice: price,
+            unitCost: finalCosting,
+            isVatExempt,
+            vatRate,
+            grossOverride: excelGross
           });
+          
+          // Override with explicit Excel columns if user manually typed them in
+          const parseMoneyVal = (raw) => {
+            if (raw === undefined || raw === null || raw === '') return NaN;
+            if (typeof raw === 'string') return parseFloat(raw.replace(/[^0-9.-]+/g, ''));
+            return parseFloat(raw);
+          };
+
+          const hasCol = (keys) => {
+            for (const k of keys) {
+              const cleanK = k.toUpperCase().replace(/[^A-Z0-9]/g, '');
+              if (headers.findIndex(h => h && h.toUpperCase().replace(/[^A-Z0-9]/g, '') === cleanK) !== -1) return true;
+            }
+            return false;
+          };
+
+          const explicitInputVat = parseMoneyVal(getValByKeys(['INPUT VAT', 'INPUTVAT']));
+          const explicitOutputVat = parseMoneyVal(getValByKeys(['OUTPUT VAT', 'OUTPUTVAT']));
+
+          if (hasCol(['INPUT VAT', 'INPUTVAT'])) {
+            vat.inputVat = isNaN(explicitInputVat) ? 0 : explicitInputVat;
+          } else if (!isNaN(explicitInputVat)) {
+            vat.inputVat = explicitInputVat;
+          }
+
+          if (hasCol(['OUTPUT VAT', 'OUTPUTVAT'])) {
+            vat.outputVat = isNaN(explicitOutputVat) ? 0 : explicitOutputVat;
+          } else if (!isNaN(explicitOutputVat)) {
+            vat.outputVat = explicitOutputVat;
+          }
+
+          if (hasCol(['VAT EXEMPT SALES', 'VAT EXEMPT SALES ', 'VATEXEMPT'])) {
+            vat.vatExemptAmount = isNaN(vatExemptVal) ? 0 : vatExemptVal;
+          } else if (!isNaN(vatExemptVal) && vatExemptVal > 0) {
+            vat.vatExemptAmount = vatExemptVal;
+          }
 
           const excelProfit = parseFloat(getValByKeys(['PROFIT'])) || 0;
           const finalProfit = excelProfit !== 0 ? excelProfit : vat.profit;
+
+          let mappedStatus = 'A/R';
+          const remarksUpper = remarks.toUpperCase();
+          if (remarksUpper.includes('PAID')) {
+            mappedStatus = 'PAID';
+          } else if (remarksUpper.includes('RETURN') || remarksUpper.includes('CANCEL') || remarksUpper.includes('VOID') || remarksUpper.includes('FAILED')) {
+            mappedStatus = 'Return';
+          }
 
           // Each row = one sale (no grouping)
           const saleId = createId();
           db.prepare('INSERT INTO sales (id, company_name, date, receipt_number, si_number, customer_id, channel, status, remarks, gross_amount, input_vat, output_vat, vat_exempt_amount, profit, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
             saleId, company, date, receiptNumberVal, siNumber || '', customerId, channel,
-            remarks === 'PAID' ? 'PAID' : 'A/R', remarks,
+            mappedStatus, remarks,
             vat.grossAmount, vat.inputVat, vat.outputVat, vat.vatExemptAmount,
             finalProfit,
             nowIso(), nowIso()
           );
 
-          db.prepare('INSERT INTO sale_items (id, sale_id, product_id, qty, unit, unit_price, gross_amount, input_vat, output_vat, vat_exempt_amount, costing, total_cost, profit, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+          db.prepare('INSERT INTO sale_items (id, sale_id, product_id, qty, unit, unit_price, gross_amount, input_vat, output_vat, vat_exempt_amount, costing, shipping_fee, total_cost, profit, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
             createId(), saleId, productId, qty, unit, price,
             vat.grossAmount, vat.inputVat, vat.outputVat, vat.vatExemptAmount,
-            finalCosting, finalTotalCost, finalProfit,
+            finalCosting, 0, finalTotalCost, finalProfit,
             nowIso()
           );
           salesImported++;

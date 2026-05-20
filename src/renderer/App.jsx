@@ -1153,9 +1153,11 @@ function summarizeSalePreview(items, products, status, vatRate = defaultTaxSetti
         const qty = status === 'FAILED' ? 0 : toNumber(item.qty, 1);
         const unitPrice = status === 'FAILED' ? 0 : toNumber(item.unit_price, getProductUnitPrice(product, lineUnit, qty));
         const unitCost = toNumber(item.unit_cost, getProductUnitCost(product, lineUnit, qty));
+        const shippingFee = toNumber(item.shipping_fee, 0);
         const line = calculateSaleLine({
             qty,
             unitPrice,
+            shippingFee,
             unitCost,
             isVatExempt: item.is_vat_exempt ?? product.is_vat_exempt ?? product.isVatExempt,
             status,
@@ -2840,7 +2842,7 @@ function SalesTab({
                                             onChange={(event) => setForm({ ...form, si_number: event.target.value })}
                                         />
                                     </label>
-                                    <label className="field">
+                                    <div className="field">
                                         <span>Customer (optional)</span>
                                         <div className="stack-h" style={{ gap: '6px', alignItems: 'stretch' }}>
                                             <div style={{ flex: 1 }}>
@@ -2861,7 +2863,7 @@ function SalesTab({
                                                 ＋
                                             </button>
                                         </div>
-                                    </label>
+                                    </div>
                                     <label className="field">
                                         <span>Company <span style={{ color: 'var(--danger)' }}>*</span></span>
                                         <select
@@ -3008,7 +3010,7 @@ function SalesTab({
                                                     Item #{index + 1}
                                                 </div>
                                                 <div className="field-grid sale-line-grid" style={{ gridTemplateColumns: 'repeat(12, minmax(0, 1fr))' }}>
-                                                    <label className="field" style={{ gridColumn: 'span 5' }}>
+                                                    <div className="field" style={{ gridColumn: 'span 5' }}>
                                                         <span>Product <span style={{ color: 'var(--danger)' }}>*</span></span>
                                                         <div className="stack-h" style={{ gap: '6px', alignItems: 'stretch' }}>
                                                             <div style={{ flex: 1 }}>
@@ -3029,7 +3031,7 @@ function SalesTab({
                                                                 ＋
                                                             </button>
                                                         </div>
-                                                    </label>
+                                                    </div>
                                                     <label className="field" style={{ gridColumn: 'span 2' }}>
                                                         <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                                                             <span>Qty <span style={{ color: 'var(--danger)' }}>*</span></span>
@@ -3085,6 +3087,18 @@ function SalesTab({
                                                             step="0.01"
                                                             value={item.unit_cost !== '' && item.unit_cost !== undefined ? item.unit_cost : (roundMoney(preview.lines[index]?.costing) ?? '')}
                                                             onChange={(event) => updateLine(index, { unit_cost: event.target.value })}
+                                                        />
+                                                    </label>
+                                                    <label className="field" style={{ gridColumn: 'span 3' }}>
+                                                        <span>Shipping fee</span>
+                                                        <input
+                                                            className="input"
+                                                            type="number"
+                                                            step="0.01"
+                                                            min="0"
+                                                            placeholder="0"
+                                                            value={item.shipping_fee !== '' && item.shipping_fee !== undefined ? item.shipping_fee : ''}
+                                                            onChange={(event) => updateLine(index, { shipping_fee: event.target.value, gross_override: null })}
                                                         />
                                                     </label>
                                                     <label className="field" style={{ gridColumn: 'span 3' }}>
@@ -3853,7 +3867,7 @@ function PurchasesTab({
                                                 {allCompanyNames.map((c) => <option key={c} value={c}>{c}</option>)}
                                             </select>
                                         </label>
-                                        <label className="field">
+                                        <div className="field">
                                             <span>SUPPLIER <span style={{ color: 'var(--danger)' }}>*</span></span>
                                             <div className="stack-h" style={{ gap: '6px', alignItems: 'stretch' }}>
                                                 <div style={{ flex: 1 }}>
@@ -3879,7 +3893,7 @@ function PurchasesTab({
                                                     ＋
                                                 </button>
                                             </div>
-                                        </label>
+                                        </div>
                                         <label className="field">
                                             <span>RECEIPT # <span style={{ color: 'var(--danger)' }}>*</span></span>
                                             <input className="input input-compact" placeholder="OR / Invoice #" value={form.receipt_number} onChange={(e) => setForm({ ...form, receipt_number: e.target.value })} />
@@ -7133,6 +7147,7 @@ export default function App() {
                     qty: item.qty,
                     unit_price: item.unit_price,
                     unit_cost: item.unit_cost,
+                    shipping_fee: item.shipping_fee ? parseFloat(item.shipping_fee) : 0,
                     gross_override: item.gross_override,
                     unit: (item.unit || '').trim(),
                     is_vat_exempt: item.is_vat_exempt
