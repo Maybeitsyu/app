@@ -332,27 +332,7 @@ export function initializeSchema(db) {
   }
 
   // Data fix migration for missing input_vat (applies to older imported data)
-  try {
-    db.exec(`
-      UPDATE sales
-      SET input_vat = gross_amount - output_vat, vat_exempt_amount = 0
-      WHERE input_vat = 0 AND vat_exempt_amount = 0 AND gross_amount > 0 AND output_vat > 0;
-      
-      UPDATE sales
-      SET input_vat = 0, vat_exempt_amount = gross_amount
-      WHERE input_vat = 0 AND vat_exempt_amount = 0 AND gross_amount > 0 AND output_vat = 0;
-      
-      UPDATE sale_items
-      SET input_vat = gross_amount - output_vat, vat_exempt_amount = 0
-      WHERE input_vat = 0 AND vat_exempt_amount = 0 AND gross_amount > 0 AND output_vat > 0;
-      
-      UPDATE sale_items
-      SET input_vat = 0, vat_exempt_amount = gross_amount
-      WHERE input_vat = 0 AND vat_exempt_amount = 0 AND gross_amount > 0 AND output_vat = 0;
-    `);
-  } catch (error) {
-    // Migration error
-  }
+  // Data fix migration removed because it incorrectly altered valid imported sales.
 
   // Add shipping_fee column to sale_items if it doesn't exist (for migration)
   try {
