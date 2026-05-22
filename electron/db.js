@@ -452,7 +452,7 @@ function serializeSaleItem(row) {
     unit: row.unit,
     unitPrice: roundMoney(row.unit_price),
     grossAmount: roundMoney(row.gross_amount),
-    netOfVat: roundMoney(row.input_vat),
+    netOfVat: roundMoney(row.net_of_vat || row.input_vat),
     outputVat: roundMoney(row.output_vat),
     vatExemptAmount: roundMoney(row.vat_exempt_amount),
     costing: roundMoney(row.costing),
@@ -480,7 +480,7 @@ function serializeSaleSummary(row) {
     invoiceType: row.invoice_type,
     remarks: row.remarks,
     grossAmount: roundMoney(row.gross_amount),
-    netOfVat: roundMoney(row.input_vat),
+    netOfVat: roundMoney(row.net_of_vat || row.input_vat),
     outputVat: roundMoney(row.output_vat),
     vatExemptAmount: roundMoney(row.vat_exempt_amount),
     profit: roundMoney(row.profit),
@@ -608,7 +608,7 @@ function getFinancialStatement(db, { fromDate = '', toDate = '', companyName = '
   // 1. Sales
   const salesAgg = db.prepare(`
     SELECT 
-      COALESCE(SUM(input_vat + vat_exempt_amount), 0) as total_sales
+      COALESCE(SUM(COALESCE(NULLIF(net_of_vat, 0), input_vat) + vat_exempt_amount), 0) as total_sales
     FROM sales
     ${whereClause} AND status NOT IN ('FAILED', 'Return')
   `).get(...params);
@@ -686,8 +686,8 @@ function getDashboardSummary(db, { fromDate = '', toDate = '' } = {}) {
     .prepare(
       `
         SELECT
-          COALESCE(SUM(CASE WHEN date = ? AND status NOT IN ('FAILED', 'Return') THEN input_vat + vat_exempt_amount ELSE 0 END), 0) AS sales_today,
-          COALESCE(SUM(CASE WHEN date >= ? AND date <= ? AND status NOT IN ('FAILED', 'Return') THEN input_vat + vat_exempt_amount ELSE 0 END), 0) AS sales_period,
+          COALESCE(SUM(CASE WHEN date = ? AND status NOT IN ('FAILED', 'Return') THEN COALESCE(NULLIF(net_of_vat, 0), input_vat) + vat_exempt_amount ELSE 0 END), 0) AS sales_today,
+          COALESCE(SUM(CASE WHEN date >= ? AND date <= ? AND status NOT IN ('FAILED', 'Return') THEN COALESCE(NULLIF(net_of_vat, 0), input_vat) + vat_exempt_amount ELSE 0 END), 0) AS sales_period,
           COALESCE(SUM(CASE WHEN date >= ? AND date <= ? AND status NOT IN ('FAILED', 'Return') THEN profit ELSE 0 END), 0) AS profit_period,
           COALESCE(SUM(CASE WHEN date >= ? AND date <= ? AND status NOT IN ('FAILED', 'Return') THEN output_vat ELSE 0 END), 0) AS output_vat_period,
           COALESCE(SUM(CASE WHEN date >= ? AND date <= ? AND status NOT IN ('FAILED', 'Return') THEN vat_exempt_amount ELSE 0 END), 0) AS vat_exempt_sales,
@@ -2603,7 +2603,7 @@ async function exportFullReportToExcel(db, filePath) {
       si.unit,
       si.unit_price,
       si.gross_amount,
-      si.input_vat,
+      COALESCE(NULLIF(si.net_of_vat, 0), si.input_vat) AS net_of_vat,
       si.output_vat,
       si.vat_exempt_amount,
       si.costing,
@@ -2663,7 +2663,7 @@ async function exportFullReportToExcel(db, filePath) {
     { header: 'UNIT', key: 'unit', width: 10 },
     { header: 'UNIT PRICE', key: 'unit_price', width: 15 },
     { header: 'GROSS AMOUNT', key: 'gross', width: 15 },
-    { header: 'NET OF VAT', key: 'input_vat', width: 15 },
+    { header: 'NET OF VAT', key: 'net_of_vat', width: 15 },
     { header: 'OUTPUT VAT', key: 'output_vat', width: 15 },
     { header: 'VAT EXEMPT SALES ', key: 'vat_exempt', width: 20 },
     { header: 'COSTING', key: 'costing', width: 15 },
@@ -2712,7 +2712,7 @@ async function exportFullReportToExcel(db, filePath) {
 
       for (let i = 0; i < salesRows.length; i++) {
         const row = salesRows[i];
-        totalSales += (row.input_vat + row.vat_exempt_amount);
+        totalSales += (row.net_of_vat + row.vat_exempt_amount);
         totalCost += row.total_cost;
         totalProfit += row.profit;
 
@@ -2728,7 +2728,7 @@ async function exportFullReportToExcel(db, filePath) {
           unit: row.unit,
           unit_price: row.unit_price,
           gross: row.gross_amount,
-          input_vat: row.gross_amount - row.output_vat,
+          net_of_vat: row.net_of_vat,
           output_vat: row.output_vat,
           vat_exempt: row.vat_exempt_amount,
           costing: row.costing,
@@ -2906,7 +2906,7 @@ async function exportSalesToExcel(db, filePath) {
     { header: 'UNIT', key: 'unit', width: 10 },
     { header: 'UNIT PRICE', key: 'unit_price', width: 15 },
     { header: 'GROSS AMOUNT', key: 'gross', width: 15 },
-    { header: 'NET OF VAT', key: 'input_vat', width: 15 },
+    { header: 'NET OF VAT', key: 'net_of_vat', width: 15 },
     { header: 'OUTPUT VAT', key: 'output_vat', width: 15 },
     { header: 'VAT EXEMPT SALES ', key: 'vat_exempt', width: 20 },
     { header: 'COSTING', key: 'costing', width: 15 },
@@ -2925,7 +2925,9 @@ async function exportSalesToExcel(db, filePath) {
   const query = `
     SELECT 
       s.date, s.receipt_number, c.tin, s.si_number, c.name as customer_name, c.address, p.name as product_name,
-      si.qty, si.unit, si.unit_price, si.gross_amount, si.input_vat, si.output_vat,
+      si.qty, si.unit, si.unit_price, si.gross_amount,
+      COALESCE(NULLIF(si.net_of_vat, 0), si.input_vat) AS net_of_vat,
+      si.output_vat,
       si.vat_exempt_amount, si.costing, si.total_cost, si.profit, s.status, s.remarks, s.po_number,
       c.contact_number, s.channel, c.customer_username
     FROM sales s
@@ -2949,7 +2951,7 @@ async function exportSalesToExcel(db, filePath) {
       unit: row.unit,
       unit_price: row.unit_price,
       gross: row.gross_amount,
-      input_vat: row.gross_amount - row.output_vat,
+      net_of_vat: row.net_of_vat,
       output_vat: row.output_vat,
       vat_exempt: row.vat_exempt_amount,
       costing: row.costing,

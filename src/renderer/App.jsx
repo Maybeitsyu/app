@@ -2020,10 +2020,11 @@ function ProductsTab({
                         {paginatedProducts.map((product) => (
                             <article
                                 key={product.id}
-                                className={`product-card ${activeProductId === product.id ? 'active' : ''}`}
+                                className={`product-card ${product.isHidden ? 'product-card--hidden' : ''} ${activeProductId === product.id ? 'active' : ''}`}
                                 onClick={() => setActiveProductId(product.id === activeProductId ? null : product.id)}
                             >
                                 {product.isRetail && <div className="retail-badge">Retail</div>}
+                                {product.isHidden && showHidden && <div className="hidden-badge" title="This product is hidden from the default list">Hidden</div>}
                                 <input
                                     type="checkbox"
                                     className="card-checkbox"

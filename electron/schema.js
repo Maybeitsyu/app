@@ -3,6 +3,18 @@ import { companyNames, defaultTaxSettings } from '../src/shared/finance.js';
 
 const DEFAULT_REORDER_POINT = 10;
 
+function tableColumns(db, tableName) {
+  return new Set(db.prepare(`PRAGMA table_info(${tableName})`).all().map((column) => column.name));
+}
+
+function ensureColumn(db, tableName, columnName, definitionSql) {
+  const columns = tableColumns(db, tableName);
+
+  if (!columns.has(columnName)) {
+    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definitionSql}`);
+  }
+}
+
 export function requiredTables() {
   return [
     'products',
@@ -74,6 +86,7 @@ export function initializeSchema(db) {
       invoice_type TEXT NOT NULL DEFAULT 'SI',
       remarks TEXT NOT NULL DEFAULT '',
       gross_amount REAL NOT NULL DEFAULT 0,
+      net_of_vat REAL NOT NULL DEFAULT 0,
       input_vat REAL NOT NULL DEFAULT 0,
       output_vat REAL NOT NULL DEFAULT 0,
       vat_exempt_amount REAL NOT NULL DEFAULT 0,
@@ -90,6 +103,7 @@ export function initializeSchema(db) {
       unit TEXT NOT NULL DEFAULT 'pc',
       unit_price REAL NOT NULL DEFAULT 0,
       gross_amount REAL NOT NULL DEFAULT 0,
+      net_of_vat REAL NOT NULL DEFAULT 0,
       input_vat REAL NOT NULL DEFAULT 0,
       output_vat REAL NOT NULL DEFAULT 0,
       vat_exempt_amount REAL NOT NULL DEFAULT 0,
@@ -266,6 +280,26 @@ export function initializeSchema(db) {
     db.exec(`ALTER TABLE sales ADD COLUMN receipt_number INTEGER`);
   } catch (error) {
     // Column might already exist, ignore
+  }
+
+  // Sales/sale_items historically stored "Net of VAT" in input_vat; rename to net_of_vat.
+  ensureColumn(db, 'sales', 'net_of_vat', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn(db, 'sale_items', 'net_of_vat', 'REAL NOT NULL DEFAULT 0');
+
+  if (tableColumns(db, 'sales').has('input_vat')) {
+    db.exec(`
+      UPDATE sales
+      SET net_of_vat = input_vat
+      WHERE net_of_vat = 0 AND input_vat != 0
+    `);
+  }
+
+  if (tableColumns(db, 'sale_items').has('input_vat')) {
+    db.exec(`
+      UPDATE sale_items
+      SET net_of_vat = input_vat
+      WHERE net_of_vat = 0 AND input_vat != 0
+    `);
   }
 
   // Add VAT exempt marker to purchases if it doesn't exist (for migration)
