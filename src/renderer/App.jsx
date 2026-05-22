@@ -1122,7 +1122,7 @@ function getChannelStyle(channel) {
 function summarizeSalePreview(items, products, status, vatRate = defaultTaxSettings.vatRate, originalItems = []) {
     const summary = {
         grossAmount: 0,
-        inputVat: 0,
+        netOfVat: 0,
         outputVat: 0,
         vatExemptAmount: 0,
         totalCost: 0,
@@ -1178,7 +1178,7 @@ function summarizeSalePreview(items, products, status, vatRate = defaultTaxSetti
         const isOverStock = stockDeduction > availableStock;
 
         summary.grossAmount += (line.grossAmount || 0);
-        summary.inputVat += (line.inputVat || 0);
+        summary.netOfVat += (line.netOfVat || 0);
         summary.outputVat += (line.outputVat || 0);
         summary.vatExemptAmount += (line.vatExemptAmount || 0);
         summary.totalCost += (line.totalCost || 0);
@@ -1868,6 +1868,15 @@ function ProductsTab({
         setCurrentPage(1);
     }, [search, pageSize, categoryFilter, retailFilter, showHidden]);
 
+    const selectedProducts = useMemo(() => {
+        return products.filter((product) => selectedIds.includes(product.id));
+    }, [products, selectedIds]);
+
+    const hiddenSelectedCount = selectedProducts.filter((product) => product.isHidden).length;
+    const visibleSelectedCount = selectedProducts.length - hiddenSelectedCount;
+    const hasHiddenSelected = hiddenSelectedCount > 0;
+    const hasVisibleSelected = visibleSelectedCount > 0;
+
     const paginatedProducts = useMemo(() => {
         const start = (currentPage - 1) * pageSize;
         return sortedProducts.slice(start, start + pageSize);
@@ -1958,26 +1967,36 @@ function ProductsTab({
                                     />
                                     <span>Select all</span>
                                 </label>
-                                <button
-                                    className="button secondary"
-                                    type="button"
-                                    onClick={() => {
-                                        onBulkToggleVisibility(selectedIds, true);
-                                        setSelectedIds([]);
-                                    }}
-                                >
-                                    Hide ({selectedIds.length})
-                                </button>
-                                <button
-                                    className="button secondary"
-                                    type="button"
-                                    onClick={() => {
-                                        onBulkToggleVisibility(selectedIds, false);
-                                        setSelectedIds([]);
-                                    }}
-                                >
-                                    Unhide ({selectedIds.length})
-                                </button>
+                                {hasVisibleSelected ? (
+                                    <button
+                                        className="button secondary"
+                                        type="button"
+                                        onClick={() => {
+                                            onBulkToggleVisibility(selectedIds.filter((id) => {
+                                                const product = selectedProducts.find((p) => p.id === id);
+                                                return product && !product.isHidden;
+                                            }), true);
+                                            setSelectedIds([]);
+                                        }}
+                                    >
+                                        Hide ({visibleSelectedCount})
+                                    </button>
+                                ) : null}
+                                {hasHiddenSelected ? (
+                                    <button
+                                        className="button secondary"
+                                        type="button"
+                                        onClick={() => {
+                                            onBulkToggleVisibility(selectedIds.filter((id) => {
+                                                const product = selectedProducts.find((p) => p.id === id);
+                                                return product && product.isHidden;
+                                            }), false);
+                                            setSelectedIds([]);
+                                        }}
+                                    >
+                                        Unhide ({hiddenSelectedCount})
+                                    </button>
+                                ) : null}
                                 <button
                                     className="button danger"
                                     type="button"
@@ -3180,7 +3199,7 @@ function SalesTab({
                                         <div className="summary-grid">
                                             <MetricCard label="Gross" value={formatCurrency(preview.grossAmount)} tone="primary" />
                                             <MetricCard label="Output VAT" value={formatCurrency(preview.outputVat)} tone="warning" />
-                                            <MetricCard label="Net of Vat:" value={formatCurrency(preview.inputVat)} tone="info" />
+                                            <MetricCard label="Net of Vat:" value={formatCurrency(preview.netOfVat)} tone="info" />
                                             <MetricCard label="Profit" value={formatCurrency(preview.profit)} tone="success" />
                                         </div>
                                         <div className="preview-breakdown">
@@ -3248,7 +3267,7 @@ function SalesTab({
                         <option value="productName">Sort by Product</option>
                         <option value="grossAmount">Sort by Gross</option>
                         <option value="outputVat">Sort by Output VAT</option>
-                        <option value="inputVat">Sort by Input VAT</option>
+                        <option value="netOfVat">Sort by Net of vat</option>
                         <option value="profit">Sort by Profit</option>
                         <option value="customerName">Sort by Customer</option>
                         <option value="status">Sort by Status</option>
@@ -3444,9 +3463,9 @@ function SalesTab({
                                             Output VAT {sortConfig.key === 'outputVat' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
                                         </div>
                                     </th>
-                                    <th onClick={() => handleSort('inputVat')} className="sortable-header numeric">
+                                    <th onClick={() => handleSort('netOfVat')} className="sortable-header numeric">
                                         <div className="header-sort-content numeric">
-                                            Input VAT {sortConfig.key === 'inputVat' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                                            Net of vat {sortConfig.key === 'netOfVat' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
                                         </div>
                                     </th>
                                     <th onClick={() => handleSort('profit')} className="sortable-header numeric">
@@ -3521,7 +3540,7 @@ function SalesTab({
                                         </td>
                                         <td className="numeric">{formatCurrency(sale.grossAmount)}</td>
                                         <td className="numeric">{formatCurrency(sale.outputVat)}</td>
-                                        <td className="numeric">{formatCurrency(sale.inputVat)}</td>
+                                        <td className="numeric">{formatCurrency(sale.netOfVat)}</td>
                                         <td className="numeric">{formatCurrency(sale.profit)}</td>
 
                                         {activeSaleId === sale.id && (

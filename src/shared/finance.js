@@ -176,7 +176,7 @@ export function calculateSaleLine({
     unitPrice: safeUnitPrice,
     shippingFee: safeShippingFee,
     grossAmount,
-    inputVat: isVatExempt ? 0 : vatSplit.netOfVat,
+    netOfVat: isVatExempt ? 0 : vatSplit.netOfVat,
     outputVat: isVatExempt ? 0 : vatSplit.vatAmount,
     vatExemptAmount: isVatExempt ? grossAmount : 0,
     costing: safeUnitCost,

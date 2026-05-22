@@ -127,13 +127,13 @@ function normalizeExpenseCategory(value) {
   if (lowerVal.includes('salary') || lowerVal.includes('wage') || lowerVal.includes('payroll') || lowerVal.includes('salaries')) {
     return 'Salaries';
   }
-  if (lowerVal.includes('permit') || lowerVal.includes('license') || lowerVal.includes('permits') || lowerVal.includes('licenses')) {
+  if (lowerVal.includes('permit') || lowerVal.includes('license') || lowerVal.includes('permits') || lowerVal.includes('licenses') || lowerVal.includes('liscens') || lowerVal.includes('lisence')) {
     return 'Permit & License';
   }
   if (lowerVal.includes('customs') || lowerVal.includes('brokerage')) {
     return "Customs & Brokerage Fee's";
   }
-  if (lowerVal.includes('install') || lowerVal.includes('installation')) {
+  if (lowerVal.includes('labor') || lowerVal.includes('labour') || lowerVal.includes('service') || lowerVal.includes('services')) {
     return 'Installation & Services';
   }
   if (lowerVal.includes('loss') || lowerVal.includes('damage') || lowerVal.includes('damaged')) {
@@ -452,7 +452,7 @@ function serializeSaleItem(row) {
     unit: row.unit,
     unitPrice: roundMoney(row.unit_price),
     grossAmount: roundMoney(row.gross_amount),
-    inputVat: roundMoney(row.input_vat),
+    netOfVat: roundMoney(row.input_vat),
     outputVat: roundMoney(row.output_vat),
     vatExemptAmount: roundMoney(row.vat_exempt_amount),
     costing: roundMoney(row.costing),
@@ -480,7 +480,7 @@ function serializeSaleSummary(row) {
     invoiceType: row.invoice_type,
     remarks: row.remarks,
     grossAmount: roundMoney(row.gross_amount),
-    inputVat: roundMoney(row.input_vat),
+    netOfVat: roundMoney(row.input_vat),
     outputVat: roundMoney(row.output_vat),
     vatExemptAmount: roundMoney(row.vat_exempt_amount),
     profit: roundMoney(row.profit),
@@ -2102,7 +2102,7 @@ function createSale(db, payload = {}) {
     `
       INSERT OR REPLACE INTO sales (
         id, company_name, date, si_number, receipt_number, customer_id, channel, status, po_number, invoice_type,
-        remarks, gross_amount, input_vat, output_vat, vat_exempt_amount, profit,
+        remarks, gross_amount, net_of_vat, output_vat, vat_exempt_amount, profit,
         created_at, updated_at
       )
       VALUES (
@@ -2116,7 +2116,7 @@ function createSale(db, payload = {}) {
     `
       UPDATE sales
       SET gross_amount = ?,
-          input_vat = ?,
+          net_of_vat = ?,
           output_vat = ?,
           vat_exempt_amount = ?,
           profit = ?,
@@ -2128,11 +2128,11 @@ function createSale(db, payload = {}) {
   const insertSaleItem = db.prepare(
     `
       INSERT INTO sale_items (
-        id, sale_id, product_id, qty, unit, unit_price, gross_amount, input_vat,
+        id, sale_id, product_id, qty, unit, unit_price, gross_amount, net_of_vat,
         output_vat, vat_exempt_amount, costing, shipping_fee, total_cost, profit, created_at
       )
       VALUES (
-        @id, @sale_id, @product_id, @qty, @unit, @unit_price, @gross_amount, @input_vat,
+        @id, @sale_id, @product_id, @qty, @unit, @unit_price, @gross_amount, @net_of_vat,
         @output_vat, @vat_exempt_amount, @costing, @shipping_fee, @total_cost, @profit, @created_at
       )
     `
@@ -2189,7 +2189,7 @@ function createSale(db, payload = {}) {
     });
 
     let grossAmount = 0;
-    let inputVat = 0;
+    let netOfVat = 0;
     let outputVat = 0;
     let vatExemptAmount = 0;
     let profit = 0;
@@ -2298,7 +2298,7 @@ function createSale(db, payload = {}) {
         unit,
         unit_price: finalLine.unitPrice,
         gross_amount: finalLine.grossAmount,
-        input_vat: finalLine.inputVat,
+        net_of_vat: finalLine.netOfVat,
         output_vat: finalLine.outputVat,
         vat_exempt_amount: finalLine.vatExemptAmount,
         costing: finalLine.costing,
@@ -2309,7 +2309,7 @@ function createSale(db, payload = {}) {
       });
 
       grossAmount += finalLine.grossAmount;
-      inputVat += finalLine.inputVat;
+      netOfVat += finalLine.netOfVat;
       outputVat += finalLine.outputVat;
       vatExemptAmount += finalLine.vatExemptAmount;
       profit += finalLine.profit;
@@ -2317,7 +2317,7 @@ function createSale(db, payload = {}) {
 
     updateSaleTotals.run(
       roundMoney(grossAmount),
-      roundMoney(inputVat),
+      roundMoney(netOfVat),
       roundMoney(outputVat),
       roundMoney(vatExemptAmount),
       roundMoney(profit),
@@ -2663,7 +2663,7 @@ async function exportFullReportToExcel(db, filePath) {
     { header: 'UNIT', key: 'unit', width: 10 },
     { header: 'UNIT PRICE', key: 'unit_price', width: 15 },
     { header: 'GROSS AMOUNT', key: 'gross', width: 15 },
-    { header: 'INPUT VAT', key: 'input_vat', width: 15 },
+    { header: 'NET OF VAT', key: 'input_vat', width: 15 },
     { header: 'OUTPUT VAT', key: 'output_vat', width: 15 },
     { header: 'VAT EXEMPT SALES ', key: 'vat_exempt', width: 20 },
     { header: 'COSTING', key: 'costing', width: 15 },
@@ -2906,7 +2906,7 @@ async function exportSalesToExcel(db, filePath) {
     { header: 'UNIT', key: 'unit', width: 10 },
     { header: 'UNIT PRICE', key: 'unit_price', width: 15 },
     { header: 'GROSS AMOUNT', key: 'gross', width: 15 },
-    { header: 'INPUT VAT', key: 'input_vat', width: 15 },
+    { header: 'NET OF VAT', key: 'input_vat', width: 15 },
     { header: 'OUTPUT VAT', key: 'output_vat', width: 15 },
     { header: 'VAT EXEMPT SALES ', key: 'vat_exempt', width: 20 },
     { header: 'COSTING', key: 'costing', width: 15 },
@@ -3245,7 +3245,7 @@ function importSalesFromCsv(db, csvContent) {
         remarks === 'PAID' ? 'PAID' : 'A/R',
         remarks,
         vat.grossAmount,
-        vat.inputVat,
+        vat.netOfVat,
         vat.outputVat,
         vat.vatExemptAmount,
         vat.profit,
@@ -3265,7 +3265,7 @@ function importSalesFromCsv(db, csvContent) {
         unit,
         unitPrice,
         vat.grossAmount,
-        vat.inputVat,
+        vat.netOfVat,
         vat.outputVat,
         vat.vatExemptAmount,
         productCost,
@@ -3358,6 +3358,49 @@ async function importFullReportFromExcel(db, filePathOrData, selectedSheetNames 
 
   const tx = db.transaction(() => {
     const newSalesTracker = new Map();
+    const purchaseExistsStmt = db.prepare(`
+      SELECT 1 FROM purchases
+      WHERE date = ? AND company_name = ? AND supplier_tin = ? AND supplier_name = ? AND receipt_number = ? AND address = ?
+        AND expense_category = ? AND gross_amount = ? AND net_of_vat = ? AND input_vat = ? AND output_vat = ?
+        AND is_vat_exempt = ? AND remarks = ?
+      LIMIT 1
+    `);
+
+    const insertPurchaseStmt = db.prepare(`
+      INSERT INTO purchases (
+        id, date, company_name, supplier_tin, supplier_name, receipt_number, address, 
+        expense_category, gross_amount, net_of_vat, input_vat, output_vat, is_vat_exempt, 
+        remarks, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertPurchaseIfNew = ({ categoryName, grossAmount, netOfVat, inputVat, outputVat, supplierName = '', receiptNumber = '', addressValue = '', remarksValue = '', tinValue = '', companyName = '', dateValue = '', isVatExemptValue = false }) => {
+      const exists = purchaseExistsStmt.get(
+        dateValue,
+        companyName,
+        tinValue || '',
+        supplierName,
+        receiptNumber,
+        addressValue,
+        categoryName,
+        grossAmount,
+        netOfVat,
+        inputVat,
+        outputVat,
+        isVatExemptValue ? 1 : 0,
+        remarksValue
+      );
+      if (exists) return false;
+
+      insertPurchaseStmt.run(
+        createId(), dateValue, companyName, tinValue || '', supplierName, receiptNumber, addressValue,
+        categoryName, grossAmount, netOfVat, inputVat, outputVat, isVatExemptValue ? 1 : 0,
+        remarksValue, nowIso(), nowIso()
+      );
+      purchasesImported++;
+      return true;
+    };
+
     workbook.eachSheet((sheet) => {
       if (selectedSheetNames && !selectedSheetNames.includes(sheet.name)) {
         return;
@@ -3386,31 +3429,35 @@ async function importFullReportFromExcel(db, filePathOrData, selectedSheetNames 
           }
         });
 
-        const rowStr = rowVals.join(' | ');
-        if (rowStr.includes('PRODUCT') && rowStr.includes('DATE')) {
+        const normalizeHeaderKey = (value) => value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        const rowKeys = rowVals.map(h => h ? normalizeHeaderKey(h) : '').filter(Boolean);
+        const hasKey = (key) => rowKeys.includes(normalizeHeaderKey(key));
+        const hasAnyKey = (keys) => keys.some(key => hasKey(key));
+
+        if (hasKey('PRODUCT') && hasKey('DATE')) {
           headers = rowVals;
           headerRowNumber = i;
           sheetType = 'SALES';
           break;
         } else if (
-          (rowStr.includes('SUPPLIER') && (rowStr.includes('CATEGORY') || rowStr.includes('GROSS AMOUNT'))) ||
-          ((rowStr.includes('NAME/TRADE NAME') || rowStr.includes('NAME/TRADENAME') || rowStr.includes('NAME / TRADE NAME') || rowStr.includes('TAX IDENTIFICATION NUMBER') || rowStr.includes('TAXIDENTIFICATIONNUMBER') || rowStr.includes('VOUCHER #') || rowStr.includes('VOUCHER#')) && (rowStr.includes('GROSS AMOUNT') || rowStr.includes('GROSSAMOUNT')))
+          (hasKey('SUPPLIER') && (hasKey('CATEGORY') || hasKey('GROSSAMOUNT'))) ||
+          ((hasAnyKey(['NAME/TRADE NAME', 'NAME/TRADENAME', 'NAME / TRADE NAME', 'TAX IDENTIFICATION NUMBER', 'TAXIDENTIFICATIONNUMBER', 'VOUCHER #', 'VOUCHER#', 'COMPANY']) || hasKey('TIN')) && hasKey('GROSSAMOUNT'))
         ) {
           headers = rowVals;
           headerRowNumber = i;
           sheetType = 'PURCHASES';
           break;
-        } else if (rowStr.includes('CODE') && rowStr.includes('STOCK')) {
+        } else if (hasKey('CODE') && hasKey('STOCK')) {
           headers = rowVals;
           headerRowNumber = i;
           sheetType = 'INVENTORY';
           break;
-        } else if (rowStr.includes('VOUCHER NO.') && rowStr.includes('AMOUNT PAID') && rowStr.includes('LANDED COST')) {
+        } else if (hasKey('VOUCHERNO') && hasKey('AMOUNTPAID') && hasKey('LANDEDCOST')) {
           headers = rowVals;
           headerRowNumber = i;
           sheetType = 'GAIN_LOSS';
           break;
-        } else if (rowStr.includes('NAME') && rowStr.includes('ADDRESS') && rowStr.includes('CONTACT')) {
+        } else if (hasKey('NAME') && hasKey('ADDRESS') && hasKey('CONTACT')) {
           headers = rowVals;
           headerRowNumber = i;
           sheetType = 'CUSTOMERS';
@@ -3537,16 +3584,45 @@ async function importFullReportFromExcel(db, filePathOrData, selectedSheetNames 
             productCost = initialCost;
           }
 
-          // Read Costing and Profit from Excel, with database fallbacks
-          let finalCosting = parseFloat(getValByKeys(['COSTING', 'UNIT COST'])) || 0;
-          if (finalCosting === 0) {
-            finalCosting = productCost;
+          const parseMoneyVal = (raw) => {
+            if (raw === undefined || raw === null || raw === '') return NaN;
+            if (typeof raw === 'string') return parseFloat(raw.replace(/[^0-9.-]+/g, ''));
+            return parseFloat(raw);
+          };
+
+          // Read Costing from Excel, with database fallback.
+          // Preserve an explicit zero typed in Excel; only fall back when the
+          // Excel cell is empty / missing.
+          const explicitCostingRaw = getValByKeys(['COSTING', 'UNIT COST']);
+          let parsedExplicitCosting = NaN;
+          if (explicitCostingRaw !== '' && explicitCostingRaw !== null && explicitCostingRaw !== undefined) {
+            const cleaned = typeof explicitCostingRaw === 'string' ? explicitCostingRaw.replace(/[^0-9.-]+/g, '') : String(explicitCostingRaw);
+            parsedExplicitCosting = parseFloat(cleaned);
           }
 
-          let finalTotalCost = parseFloat(getValByKeys(['TOTAL COST', 'TOTALCOST', 'COST'])) || 0;
-          if (finalTotalCost === 0) {
-            finalTotalCost = roundMoney(qty * finalCosting);
-          }
+          const hasCol = (keys) => {
+            for (const k of keys) {
+              const cleanK = k.toUpperCase().replace(/[^A-Z0-9]/g, '');
+              if (headers.findIndex(h => h && h.toUpperCase().replace(/[^A-Z0-9]/g, '') === cleanK) !== -1) return true;
+            }
+            return false;
+          };
+
+          const explicitTotalCost = parseMoneyVal(getValByKeys(['TOTAL COST', 'TOTALCOST']));
+          const hasExplicitTotalCost = !isNaN(explicitTotalCost);
+          const hasTotalCostColumn = hasCol(['TOTAL COST', 'TOTALCOST']);
+
+          const normalizedProductName = String(product || '').toLowerCase();
+          const isShippingLine = normalizedProductName.includes('shipping') || normalizedProductName.includes('delivery') || normalizedProductName.includes('freight');
+          const finalCosting = Number.isFinite(parsedExplicitCosting)
+            ? parsedExplicitCosting
+            : (isShippingLine ? 0 : productCost);
+
+          // If TOTAL COST is present, use it directly for imported COGS.
+          // If the cell is blank, treat it as zero instead of computing from product cost.
+          const finalTotalCost = hasTotalCostColumn
+            ? (hasExplicitTotalCost ? roundMoney(explicitTotalCost) : 0)
+            : roundMoney(qty * finalCosting);
 
           const vatExemptRaw = getValByKeys(['VAT EXEMPT SALES', 'VAT EXEMPT SALES ', 'VATEXEMPT']);
           const vatExemptVal = typeof vatExemptRaw === 'string' 
@@ -3564,29 +3640,14 @@ async function importFullReportFromExcel(db, filePathOrData, selectedSheetNames 
             vatRate,
             grossOverride: excelGross
           });
-          
-          // Override with explicit Excel columns if user manually typed them in
-          const parseMoneyVal = (raw) => {
-            if (raw === undefined || raw === null || raw === '') return NaN;
-            if (typeof raw === 'string') return parseFloat(raw.replace(/[^0-9.-]+/g, ''));
-            return parseFloat(raw);
-          };
 
-          const hasCol = (keys) => {
-            for (const k of keys) {
-              const cleanK = k.toUpperCase().replace(/[^A-Z0-9]/g, '');
-              if (headers.findIndex(h => h && h.toUpperCase().replace(/[^A-Z0-9]/g, '') === cleanK) !== -1) return true;
-            }
-            return false;
-          };
-
-          const explicitInputVat = parseMoneyVal(getValByKeys(['INPUT VAT', 'INPUTVAT']));
+          const explicitInputVat = parseMoneyVal(getValByKeys(['NET OF VAT', 'NETOFVAT', 'INPUT VAT', 'INPUTVAT']));
           const explicitOutputVat = parseMoneyVal(getValByKeys(['OUTPUT VAT', 'OUTPUTVAT']));
 
-          if (hasCol(['INPUT VAT', 'INPUTVAT'])) {
-            vat.inputVat = isNaN(explicitInputVat) ? 0 : explicitInputVat;
+          if (hasCol(['NET OF VAT', 'NETOFVAT', 'INPUT VAT', 'INPUTVAT'])) {
+            vat.netOfVat = isNaN(explicitInputVat) ? 0 : explicitInputVat;
           } else if (!isNaN(explicitInputVat)) {
-            vat.inputVat = explicitInputVat;
+            vat.netOfVat = explicitInputVat;
           }
 
           if (hasCol(['OUTPUT VAT', 'OUTPUTVAT'])) {
@@ -3617,14 +3678,14 @@ async function importFullReportFromExcel(db, filePathOrData, selectedSheetNames 
           db.prepare('INSERT INTO sales (id, company_name, date, receipt_number, si_number, customer_id, channel, status, remarks, gross_amount, input_vat, output_vat, vat_exempt_amount, profit, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
             saleId, company, date, receiptNumberVal, siNumber || '', customerId, channel,
             mappedStatus, remarks,
-            vat.grossAmount, vat.inputVat, vat.outputVat, vat.vatExemptAmount,
+            vat.grossAmount, vat.netOfVat, vat.outputVat, vat.vatExemptAmount,
             finalProfit,
             nowIso(), nowIso()
           );
 
           db.prepare('INSERT INTO sale_items (id, sale_id, product_id, qty, unit, unit_price, gross_amount, input_vat, output_vat, vat_exempt_amount, costing, shipping_fee, total_cost, profit, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
             createId(), saleId, productId, qty, unit, price,
-            vat.grossAmount, vat.inputVat, vat.outputVat, vat.vatExemptAmount,
+            vat.grossAmount, vat.netOfVat, vat.outputVat, vat.vatExemptAmount,
             finalCosting, 0, finalTotalCost, finalProfit,
             nowIso()
           );
@@ -3653,8 +3714,33 @@ async function importFullReportFromExcel(db, filePathOrData, selectedSheetNames 
           const categoryColIndices = [];
           headers.forEach((h, idx) => {
             if (!h || idx === 0) return;
-            const normalized = normalizeExpenseCategory(h);
             const cleanH = h.toUpperCase().trim();
+            // Remove all non-alphanumeric for more robust matching
+            const alphaOnly = cleanH.replace(/[^A-Z0-9]/g, '');
+            
+            // Skip system columns that are not expense categories
+            if (cleanH.includes('GROSS AMOUNT') || 
+                alphaOnly.includes('GROSSAMOUNT') ||
+                cleanH.includes('NET OF VAT') ||
+                alphaOnly.includes('NETOFVAT') ||
+                cleanH.includes('INPUT VAT') ||
+                alphaOnly.includes('INPUTVAT') ||
+                cleanH.includes('OUTPUT VAT') ||
+                alphaOnly.includes('OUTPUTVAT') ||
+                cleanH.includes('DATE') ||
+                cleanH.includes('SUPPLIER') ||
+                cleanH.includes('COMPANY') ||
+                alphaOnly.includes('TAXIDENTIFICATIONNUMBER') ||
+                alphaOnly.includes('TIN') ||
+                cleanH.includes('ADDRESS') ||
+                alphaOnly.includes('RECEIPT') ||
+                cleanH.includes('REMARKS') ||
+                alphaOnly.includes('VOUCHER') ||
+                alphaOnly.includes('TRADENAME')) {
+              return;
+            }
+            
+            const normalized = normalizeExpenseCategory(h);
             if (
               normalized !== 'Miscellaneous' ||
               cleanH === 'OTHERS' ||
@@ -3669,6 +3755,7 @@ async function importFullReportFromExcel(db, filePathOrData, selectedSheetNames 
           });
 
           if (categoryColIndices.length > 0 && !categoryVal) {
+            let foundAnyCategoryValue = false;
             let parsedAny = false;
             for (const catCol of categoryColIndices) {
               const cellVal = row.getCell(catCol.index).value;
@@ -3680,41 +3767,47 @@ async function importFullReportFromExcel(db, filePathOrData, selectedSheetNames 
               }
 
               if (val > 0) {
+                foundAnyCategoryValue = true;
                 const vat = calculatePurchaseLine({ grossAmount: val, isVatExempt, vatRate });
-                db.prepare(`
-                  INSERT INTO purchases (
-                    id, date, company_name, supplier_tin, supplier_name, receipt_number, address, 
-                    expense_category, gross_amount, net_of_vat, input_vat, output_vat, is_vat_exempt, 
-                    remarks, created_at, updated_at
-                  ) 
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                `).run(
-                  createId(), date, company, tin || '', supplier, receipt || '', address || '',
-                  catCol.categoryName, vat.grossAmount, vat.netOfVat, vat.inputVat, 0, isVatExempt ? 1 : 0,
-                  remarks, nowIso(), nowIso()
-                );
-                purchasesImported++;
-                parsedAny = true;
+                if (insertPurchaseIfNew({
+                  categoryName: catCol.categoryName,
+                  grossAmount: vat.grossAmount,
+                  netOfVat: vat.netOfVat,
+                  inputVat: vat.inputVat,
+                  outputVat: 0,
+                  supplierName: supplier,
+                  receiptNumber: receipt,
+                  addressValue: address,
+                  remarksValue: remarks,
+                  tinValue: tin,
+                  companyName: company,
+                  dateValue: date,
+                  isVatExemptValue: isVatExempt
+                })) {
+                  parsedAny = true;
+                }
               }
             }
 
-            if (!parsedAny) {
+            if (!foundAnyCategoryValue) {
               const grossAmount = parseFloat(getValByKeys(['GROSS AMOUNT', 'GROSSAMOUNT'])) || 0;
               if (grossAmount > 0) {
                 const vat = calculatePurchaseLine({ grossAmount, isVatExempt, vatRate });
-                db.prepare(`
-                  INSERT INTO purchases (
-                    id, date, company_name, supplier_tin, supplier_name, receipt_number, address, 
-                    expense_category, gross_amount, net_of_vat, input_vat, output_vat, is_vat_exempt, 
-                    remarks, created_at, updated_at
-                  ) 
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                `).run(
-                  createId(), date, company, tin || '', supplier, receipt || '', address || '',
-                  'Miscellaneous', vat.grossAmount, vat.netOfVat, vat.inputVat, 0, isVatExempt ? 1 : 0,
-                  remarks, nowIso(), nowIso()
-                );
-                purchasesImported++;
+                insertPurchaseIfNew({
+                  categoryName: 'Miscellaneous',
+                  grossAmount: vat.grossAmount,
+                  netOfVat: vat.netOfVat,
+                  inputVat: vat.inputVat,
+                  outputVat: 0,
+                  supplierName: supplier,
+                  receiptNumber: receipt,
+                  addressValue: address,
+                  remarksValue: remarks,
+                  tinValue: tin,
+                  companyName: company,
+                  dateValue: date,
+                  isVatExemptValue: isVatExempt
+                });
               }
             }
           } else {
@@ -3722,19 +3815,21 @@ async function importFullReportFromExcel(db, filePathOrData, selectedSheetNames 
             const category = normalizeExpenseCategory(categoryVal || 'Miscellaneous');
             const vat = calculatePurchaseLine({ grossAmount, isVatExempt, vatRate });
 
-            db.prepare(`
-              INSERT INTO purchases (
-                id, date, company_name, supplier_tin, supplier_name, receipt_number, address, 
-                expense_category, gross_amount, net_of_vat, input_vat, output_vat, is_vat_exempt, 
-                remarks, created_at, updated_at
-              ) 
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(
-              createId(), date, company, tin || '', supplier, receipt || '', address || '',
-              category, vat.grossAmount, vat.netOfVat, vat.inputVat, 0, isVatExempt ? 1 : 0,
-              remarks, nowIso(), nowIso()
-            );
-            purchasesImported++;
+            insertPurchaseIfNew({
+              categoryName: category,
+              grossAmount: vat.grossAmount,
+              netOfVat: vat.netOfVat,
+              inputVat: vat.inputVat,
+              outputVat: 0,
+              supplierName: supplier,
+              receiptNumber: receipt,
+              addressValue: address,
+              remarksValue: remarks,
+              tinValue: tin,
+              companyName: company,
+              dateValue: date,
+              isVatExemptValue: isVatExempt
+            });
           }
         }
         else if (sheetType === 'INVENTORY') {

@@ -1,0 +1,195 @@
+Excel File: example xl/example.xlsx
+Excel Sheet: 1ST QTR SALES 2026 (filtered for March 2026)
+
+Active Excel Rows Count: 16
+Excel Total Costing Sum: ₱181,522.534
+
+Active DB Rows Count:    175
+DB Total Costing Sum:       ₱1,478,611.12
+
+Difference (DB - Excel):  ₱1,297,088.586
+
+========================================
+DISCREPANCIES & UNMATCHED ROWS
+========================================
+
+[UNMATCHED_EXCEL] Excel Row 92: Date "2026-03-17", SI "SI 0241", Product "30 LT MILK CAN", Customer "STREAMFLOW TRADING AND GENERAL SERVICES"
+  Excel: Qty=2, Price=6500, Costing=4771.02, TotalCost=9542.04
+
+[COST_MISMATCH] Excel Row 96: SI "SI 0244", Product "SHIPPING FEE", Customer "AURORA PREMIUM CATTLE"
+  Excel: Qty=1, Price=2400, Costing=0, TotalCost=0
+  DB:    Qty=1, Price=2400, Costing=2246, TotalCost=2246
+  Diff:  2246.00
+
+[UNMATCHED_EXCEL] Excel Row 98: Date "2026-03-31", SI "SI 0246", Product "TK2-2PK", Customer "NILO BATINGA"
+  Excel: Qty=1, Price=65000, Costing=31242.41, TotalCost=31242.41
+
+[UNMATCHED_EXCEL] Excel Row 99: Date "2026-03-31", SI "SI 0247", Product "TK2-2PK", Customer "RRSAC"
+  Excel: Qty=1, Price=65000, Costing=31242.41, TotalCost=31242.41
+
+Matched Count: 13
+Unmatched DB Rows Count: 162
+
+Unmatched DB Rows:
+  SI: "SHOPEE", Date: "2026-03-01", Product: "DUFAMEC", Qty=1, Price=1310, Costing=880, TotalCost=880
+  SI: "SHOPEE", Date: "2026-03-01", Product: "DAIRYSOLUTIONS", Qty=2, Price=350, Costing=178.31, TotalCost=356.62
+  SI: "SHOPEE", Date: "2026-03-01", Product: "MILKHOSE", Qty=3, Price=300, Costing=119.01, TotalCost=357.03
+  SI: "SHOPEE", Date: "2026-03-01", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=178.31, TotalCost=178.31
+  SI: "2GOEXPRESS", Date: "2026-03-02", Product: "DAIRYSOLUTIONS", Qty=15, Price=5250, Costing=3731.54, TotalCost=55973.1
+  SI: "2GOEXPRESS", Date: "2026-03-02", Product: "DAIRYSOLUTIONS", Qty=64, Price=230, Costing=178.31, TotalCost=11411.84
+  SI: "2GOEXPRESS", Date: "2026-03-02", Product: "SHIPPINGFEE", Qty=1, Price=6413.05, Costing=500, TotalCost=500
+  SI: "LALAMOVE", Date: "2026-03-02", Product: "DAIRYSOLUTIONS", Qty=1, Price=5500, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-02", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-02", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=178.31, TotalCost=178.31
+  SI: "WALKINN", Date: "2026-03-02", Product: "DAIRYSOLUTIONS", Qty=1, Price=5500, Costing=3731.54, TotalCost=3731.54
+  SI: "WALKINN", Date: "2026-03-02", Product: "DAIRYSOLUTIONS", Qty=100, Price=4750, Costing=3731.54, TotalCost=373154
+  SI: "SHOPEE", Date: "2026-03-03", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=178.31, TotalCost=178.31
+  SI: "SHOPEE", Date: "2026-03-03", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=178.31, TotalCost=178.31
+  SI: "SHOPEE", Date: "2026-03-03", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-03", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=178.31, TotalCost=178.31
+  SI: "WALKINN", Date: "2026-03-03", Product: "KANAPEN", Qty=6, Price=350, Costing=172.5, TotalCost=1035
+  SI: "", Date: "2026-03-04", Product: "DAIRYSOLUTIONS", Qty=64, Price=234.38, Costing=178.31, TotalCost=11411.84
+  SI: "LALAMOVE", Date: "2026-03-04", Product: "DAIRYSOLUTIONS", Qty=1, Price=5500, Costing=3731.54, TotalCost=3731.54
+  SI: "R0193", Date: "2026-03-04", Product: "MILKINGCLAW", Qty=1, Price=3000, Costing=314.48, TotalCost=314.48
+  SI: "R0193", Date: "2026-03-04", Product: "SHUTOFFVALVEONLY", Qty=4, Price=75, Costing=7.95, TotalCost=31.8
+  SI: "R0193", Date: "2026-03-04", Product: "SHUTOFFVALVEGASKET", Qty=4, Price=75, Costing=1.17, TotalCost=4.68
+  SI: "R0193", Date: "2026-03-04", Product: "DUFAFOSFAN", Qty=1, Price=850, Costing=583.33, TotalCost=583.33
+  SI: "R0193", Date: "2026-03-04", Product: "PULSATORFORCOWS", Qty=1, Price=1800, Costing=474.63, TotalCost=474.63
+  SI: "R0193", Date: "2026-03-04", Product: "FEEDINGBOTTLEFORCALF", Qty=1, Price=300, Costing=84.68, TotalCost=84.68
+  SI: "R0193", Date: "2026-03-04", Product: "REPLACEMENTNIPPLEFORCALFFEEDINGBOTTLE", Qty=1, Price=150, Costing=7.34, TotalCost=7.34
+  SI: "SHOPEE", Date: "2026-03-04", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-04", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-04", Product: "DAIRYSOLUTIONS", Qty=6, Price=350, Costing=178.31, TotalCost=1069.86
+  SI: "WALKINN", Date: "2026-03-04", Product: "KANAPEN", Qty=2, Price=350, Costing=178.31, TotalCost=356.62
+  SI: "LALAMOVE", Date: "2026-03-05", Product: "DAIRYSOLUTIONS", Qty=1, Price=5250, Costing=3731.54, TotalCost=3731.54
+  SI: "LALAMOVE", Date: "2026-03-05", Product: "FEEDINGBOTTLEFORCALF", Qty=1, Price=300, Costing=84.68, TotalCost=84.68
+  SI: "LALAMOVE", Date: "2026-03-05", Product: "REPLACEMENTNIPPLEFORCALFFEEDINGBOTTLE", Qty=1, Price=150, Costing=7.34, TotalCost=7.34
+  SI: "SHOPEE", Date: "2026-03-05", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=178.31, TotalCost=178.31
+  SI: "SHOPEE", Date: "2026-03-05", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-05", Product: "DAIRYSOLUTIONS", Qty=3, Price=350, Costing=178.31, TotalCost=534.93
+  SI: "SHOPEE", Date: "2026-03-05", Product: "BIOCATALIN", Qty=2, Price=690, Costing=395.83, TotalCost=791.66
+  SI: "", Date: "2026-03-06", Product: "DUFAMOXG", Qty=0, Price=0, Costing=583.33, TotalCost=4083.31
+  SI: "", Date: "2026-03-06", Product: "DAIRYSOLUTIONS", Qty=32, Price=230, Costing=178.31, TotalCost=5705.92
+  SI: "JNT", Date: "2026-03-06", Product: "DAIRYSOLUTIONS", Qty=2, Price=350, Costing=178.31, TotalCost=356.62
+  SI: "JNT", Date: "2026-03-06", Product: "SHIPPINGFEE", Qty=1, Price=205, Costing=500, TotalCost=500
+  SI: "SHOPEE", Date: "2026-03-06", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=178.31, TotalCost=178.31
+  SI: "SHOPEE", Date: "2026-03-06", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-06", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "WALKINN", Date: "2026-03-06", Product: "DAIRYSOLUTIONS", Qty=32, Price=240, Costing=178.31, TotalCost=5705.92
+  SI: "SHOPEE", Date: "2026-03-07", Product: "MILKHOSE", Qty=3, Price=300, Costing=119.01, TotalCost=357.03
+  SI: "WALKINN", Date: "2026-03-07", Product: "KANAPEN", Qty=4, Price=350, Costing=172.5, TotalCost=690
+  SI: "SHOPEE", Date: "2026-03-09", Product: "DAIRYSOLUTIONS", Qty=2, Price=350, Costing=178.31, TotalCost=356.62
+  SI: "SHOPEE", Date: "2026-03-09", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=178.31, TotalCost=178.31
+  SI: "SHOPEE", Date: "2026-03-09", Product: "DUFAMEC", Qty=1, Price=1310, Costing=880, TotalCost=880
+  SI: "SHOPEE", Date: "2026-03-09", Product: "DUFAPROFEN", Qty=1, Price=1249, Costing=870, TotalCost=870
+  SI: "SHOPEE", Date: "2026-03-09", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=178.31, TotalCost=178.31
+  SI: "", Date: "2026-03-10", Product: "KANAPEN", Qty=5, Price=350, Costing=172.5, TotalCost=862.5
+  SI: "SHOPEE", Date: "2026-03-10", Product: "DAIRYSOLUTIONS", Qty=5, Price=350, Costing=178.31, TotalCost=891.55
+  SI: "SHOPEE", Date: "2026-03-10", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "LALAMOVE", Date: "2026-03-11", Product: "DAIRYSOLUTIONS", Qty=64, Price=230, Costing=178.31, TotalCost=11411.84
+  SI: "LALAMOVE", Date: "2026-03-11", Product: "DAIRYSOLUTIONS", Qty=1, Price=5250, Costing=3731.54, TotalCost=3731.54
+  SI: "R194", Date: "2026-03-11", Product: "DAIRYSOLUTIONS", Qty=5, Price=5000, Costing=3731.54, TotalCost=18657.7
+  SI: "R194", Date: "2026-03-11", Product: "LONGLINER", Qty=2, Price=560, Costing=218.56, TotalCost=437.12
+  SI: "R194", Date: "2026-03-11", Product: "FEEDINGBOTTLEFORCALF", Qty=1, Price=300, Costing=84.68, TotalCost=84.68
+  SI: "SHOPEE", Date: "2026-03-11", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=178.31, TotalCost=178.31
+  SI: "SHOPEE", Date: "2026-03-11", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=178.31, TotalCost=178.31
+  SI: "SHOPEE", Date: "2026-03-11", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-11", Product: "DAIRYSOLUTIONS", Qty=3, Price=350, Costing=178.31, TotalCost=534.93
+  SI: "SHOPEE", Date: "2026-03-11", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=178.31, TotalCost=178.31
+  SI: "SHOPEE", Date: "2026-03-11", Product: "DAIRYSOLUTIONS", Qty=0, Price=0, Costing=174.49, TotalCost=0
+  SI: "SI0232", Date: "2026-03-11", Product: "DAIRYSOLUTIONS", Qty=60, Price=4750, Costing=3731.54, TotalCost=223892.4
+  SI: "SI0232", Date: "2026-03-11", Product: "SHIPPINGFEE", Qty=1, Price=25000, Costing=500, TotalCost=500
+  SI: "SI0232", Date: "2026-03-11", Product: "FEEDINGBOTTLEFORCALF", Qty=5, Price=0, Costing=84.68, TotalCost=423.4
+  SI: "WALKINN", Date: "2026-03-11", Product: "DOUBLEBUCKETMIKINGMACHINE", Qty=1, Price=58035, Costing=31242.41, TotalCost=31242.41
+  SI: "2GOEXPRESS", Date: "2026-03-12", Product: "DAIRYSOLUTIONS", Qty=5, Price=5000, Costing=3731.54, TotalCost=18657.7
+  SI: "2GOEXPRESS", Date: "2026-03-12", Product: "SHIPPINGFEE", Qty=1, Price=1700, Costing=500, TotalCost=500
+  SI: "2GOEXPRESS", Date: "2026-03-12", Product: "DAIRYSOLUTIONS", Qty=4, Price=5500, Costing=3731.54, TotalCost=14926.16
+  SI: "2GOEXPRESS", Date: "2026-03-12", Product: "SHIPPINGFEE", Qty=1, Price=1300, Costing=500, TotalCost=500
+  SI: "JNT", Date: "2026-03-12", Product: "DAIRYSOLUTIONS", Qty=2, Price=350, Costing=178.31, TotalCost=356.62
+  SI: "SHOPEE", Date: "2026-03-12", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "WALKINN", Date: "2026-03-12", Product: "DAIRYSOLUTIONS", Qty=1, Price=5500, Costing=3731.54, TotalCost=3731.54
+  SI: "WALKINN", Date: "2026-03-12", Product: "DAIRYSOLUTIONS", Qty=1, Price=5500, Costing=3731.54, TotalCost=3731.54
+  SI: "LALAMOVE", Date: "2026-03-13", Product: "DAIRYSOLUTIONS", Qty=10, Price=5250, Costing=3731.54, TotalCost=37315.4
+  SI: "SHOPEE", Date: "2026-03-13", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-13", Product: "BIOCATALIN", Qty=4, Price=690, Costing=395.83, TotalCost=1583.32
+  SI: "SHOPEE", Date: "2026-03-13", Product: "DAIRYSOLUTIONS", Qty=2, Price=350, Costing=178.31, TotalCost=356.62
+  SI: "SHOPEE", Date: "2026-03-13", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-13", Product: "MILKHOSE", Qty=6, Price=300, Costing=119.01, TotalCost=714.06
+  SI: "SHOPEE", Date: "2026-03-13", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=178.31, TotalCost=178.31
+  SI: "LALAMOVE", Date: "2026-03-14", Product: "DAIRYSOLUTIONS", Qty=5, Price=5250, Costing=3731.54, TotalCost=18657.7
+  SI: "LALAMOVE", Date: "2026-03-14", Product: "DAIRYSOLUTIONS", Qty=1, Price=5500, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-14", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-14", Product: "FEEDINGBOTTLEFORGOATKIDS", Qty=1, Price=300, Costing=39.2, TotalCost=39.2
+  SI: "SHOPEE", Date: "2026-03-14", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=178.31, TotalCost=178.31
+  SI: "SHOPEE", Date: "2026-03-14", Product: "DAIRYSOLUTIONS", Qty=2, Price=350, Costing=178.31, TotalCost=356.62
+  SI: "SHOPEE", Date: "2026-03-14", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-14", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "LALAMOVE", Date: "2026-03-16", Product: "DAIRYSOLUTIONS", Qty=7, Price=5250, Costing=3731.54, TotalCost=26120.78
+  SI: "SHOPEE", Date: "2026-03-16", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-16", Product: "BIOCATALIN", Qty=3, Price=690, Costing=395.83, TotalCost=1187.49
+  SI: "SHOPEE", Date: "2026-03-16", Product: "DAIRYSOLUTIONS", Qty=5, Price=350, Costing=178.31, TotalCost=891.55
+  SI: "SHOPEE", Date: "2026-03-16", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-16", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-16", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "VICTORY", Date: "2026-03-16", Product: "DAIRYSOLUTIONS", Qty=5, Price=5250, Costing=3731.54, TotalCost=18657.7
+  SI: "VICTORY", Date: "2026-03-16", Product: "SHIPPINGFEE", Qty=1, Price=3000, Costing=500, TotalCost=500
+  SI: "WALKINN", Date: "2026-03-16", Product: "DAIRYSOLUTIONS", Qty=64, Price=234.38, Costing=178.31, TotalCost=11411.84
+  SI: "SHOPEE", Date: "2026-03-17", Product: "FEEDINGBOTTLEFORCALF", Qty=2, Price=300, Costing=84.68, TotalCost=169.36
+  SI: "SI241", Date: "2026-03-17", Product: "30LITMILKCAN", Qty=2, Price=6500, Costing=4771.02, TotalCost=9542.04
+  SI: "SHOPEE", Date: "2026-03-18", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-18", Product: "TICKAMIT", Qty=2, Price=3224, Costing=2110, TotalCost=4220
+  SI: "SHOPEE", Date: "2026-03-18", Product: "TICKAMIT", Qty=1, Price=3224, Costing=2110, TotalCost=2110
+  SI: "SHOPEE", Date: "2026-03-18", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=178.31, TotalCost=178.31
+  SI: "LALAMOVE", Date: "2026-03-19", Product: "DAIRYSOLUTIONS", Qty=10, Price=5250, Costing=3731.54, TotalCost=37315.4
+  SI: "SHOPEE", Date: "2026-03-19", Product: "TICKAMIT", Qty=1, Price=3224, Costing=2110, TotalCost=2110
+  SI: "SHOPEE", Date: "2026-03-19", Product: "BIOCATALIN", Qty=2, Price=690, Costing=395.83, TotalCost=791.66
+  SI: "SHOPEE", Date: "2026-03-20", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=178.31, TotalCost=178.31
+  SI: "SHOPEE", Date: "2026-03-20", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=178.31, TotalCost=178.31
+  SI: "SHOPEE", Date: "2026-03-20", Product: "DUFAPROFEN", Qty=1, Price=1249, Costing=870, TotalCost=870
+  SI: "SHOPEE", Date: "2026-03-20", Product: "DAIRYSOLUTIONS", Qty=32, Price=240, Costing=178.31, TotalCost=5705.92
+  SI: "SHOPEE", Date: "2026-03-20", Product: "DAIRYSOLUTIONS", Qty=4, Price=350, Costing=178.31, TotalCost=713.24
+  SI: "SHOPEE", Date: "2026-03-20", Product: "MILKHOSE", Qty=7, Price=300, Costing=119.1, TotalCost=833.7
+  SI: "SHOPEE", Date: "2026-03-21", Product: "DUFAPROFEN", Qty=1, Price=1249, Costing=870, TotalCost=870
+  SI: "SHOPEE", Date: "2026-03-21", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=178.31, TotalCost=178.31
+  SI: "SHOPEE", Date: "2026-03-21", Product: "REPAIRKIT", Qty=1, Price=150, Costing=37.49, TotalCost=37.49
+  SI: "SHOPEE", Date: "2026-03-21", Product: "DAIRYSOLUTIONS", Qty=2, Price=350, Costing=178.31, TotalCost=356.62
+  SI: "SHOPEE", Date: "2026-03-22", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-22", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-23", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-23", Product: "BIOCATALIN", Qty=1, Price=690, Costing=395.83, TotalCost=395.83
+  SI: "SHOPEE", Date: "2026-03-23", Product: "DUFAPROFEN", Qty=1, Price=1249, Costing=870, TotalCost=870
+  SI: "R195", Date: "2026-03-24", Product: "KANAPEN", Qty=1, Price=6250, Costing=4140, TotalCost=4140
+  SI: "R195", Date: "2026-03-24", Product: "DUFAPROFEN", Qty=1, Price=1249, Costing=870, TotalCost=870
+  SI: "R195", Date: "2026-03-24", Product: "ESTROPPUR", Qty=2, Price=1350, Costing=990, TotalCost=1980
+  SI: "SHOPEE", Date: "2026-03-24", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-24", Product: "DAIRYSOLUTIONS", Qty=2, Price=350, Costing=178.31, TotalCost=356.62
+  SI: "SHOPEE", Date: "2026-03-24", Product: "DAIRYSOLUTIONS", Qty=2, Price=350, Costing=178.31, TotalCost=356.62
+  SI: "WALKINN", Date: "2026-03-24", Product: "DAIRYSOLUTIONS", Qty=1, Price=5500, Costing=3731.54, TotalCost=3731.54
+  SI: "", Date: "2026-03-25", Product: "DAIRYSOLUTIONS", Qty=3, Price=350, Costing=178.31, TotalCost=534.93
+  SI: "SHOPEE", Date: "2026-03-25", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-25", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=178.31, TotalCost=178.31
+  SI: "DEL;IVERED", Date: "2026-03-26", Product: "DAIRYSOLUTIONS", Qty=1, Price=5500, Costing=3731.54, TotalCost=3731.54
+  SI: "LALAMOVE", Date: "2026-03-26", Product: "DAIRYSOLUTIONS", Qty=96, Price=230, Costing=174.48, TotalCost=16750.08
+  SI: "SHOPEE", Date: "2026-03-26", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=178.31, TotalCost=178.31
+  SI: "SHOPEE", Date: "2026-03-26", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-26", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "LALAMOVE", Date: "2026-03-27", Product: "KANAPEN", Qty=5, Price=350, Costing=172.5, TotalCost=862.5
+  SI: "SHOPEE", Date: "2026-03-27", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-27", Product: "DAIRYSOLUTIONS", Qty=2, Price=350, Costing=174.48, TotalCost=348.96
+  SI: "SHOPEE", Date: "2026-03-27", Product: "BIOCATALIN", Qty=2, Price=690, Costing=395.83, TotalCost=791.66
+  SI: "WALKINN", Date: "2026-03-27", Product: "DAIRYSOLUTIONS", Qty=3, Price=350, Costing=174.48, TotalCost=523.44
+  SI: "SHOPEE", Date: "2026-03-28", Product: "MILKHOSE", Qty=3, Price=300, Costing=119.01, TotalCost=357.03
+  SI: "SHOPEE", Date: "2026-03-28", Product: "ALKAPLUS", Qty=1, Price=2240, Costing=1359.99, TotalCost=1359.99
+  SI: "SI0244", Date: "2026-03-28", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=174.48, TotalCost=174.48
+  SI: "WALKINN", Date: "2026-03-28", Product: "DAIRYSOLUTIONS", Qty=2, Price=5500, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-29", Product: "DAIRYSOLUTIONS", Qty=1, Price=6100, Costing=3731.54, TotalCost=3731.54
+  SI: "SHOPEE", Date: "2026-03-29", Product: "BIOCATALIN", Qty=2, Price=690, Costing=395.83, TotalCost=791.66
+  SI: "SHOPEE", Date: "2026-03-29", Product: "TICKAMIT", Qty=1, Price=3224, Costing=2110, TotalCost=2110
+  SI: "R0197", Date: "2026-03-30", Product: "DAIRYSOLUTIONS", Qty=32, Price=234.38, Costing=174.48, TotalCost=5583.36
+  SI: "SHOPEE", Date: "2026-03-30", Product: "BIOCATALIN", Qty=3, Price=690, Costing=395.83, TotalCost=1187.49
+  SI: "SHOPEE", Date: "2026-03-30", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=174.48, TotalCost=174.48
+  SI: "R0198", Date: "2026-03-31", Product: "DAIRYSOLUTIONS", Qty=50, Price=4750, Costing=3731.54, TotalCost=186577
+  SI: "SHOPEE", Date: "2026-03-31", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=174.48, TotalCost=174.48
+  SI: "SHOPEE", Date: "2026-03-31", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=174.48, TotalCost=174.48
+  SI: "SHOPEE", Date: "2026-03-31", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=174.48, TotalCost=174.48
+  SI: "SHOPEE", Date: "2026-03-31", Product: "DAIRYSOLUTIONS", Qty=1, Price=350, Costing=174.48, TotalCost=174.48

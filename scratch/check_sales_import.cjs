@@ -1,0 +1,11 @@
+const fs = require('fs');
+
+const content = fs.readFileSync('electron/db.js', 'utf8');
+const lines = content.split('\n');
+
+const start = 3500;
+const end = 3570;
+
+for (let i = start; i <= end; i++) {
+  console.log(`${i}: ${lines[i - 1]}`);
+}
