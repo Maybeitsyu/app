@@ -163,7 +163,7 @@ img {
 }
 
 .modal-box.modal-wide {
-  max-width: 1040px;
+  max-width: 1120px;
 }
 
 @keyframes modal-in {
@@ -607,14 +607,93 @@ img {
 
 .sales-grid {
   align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  gap: 20px;
 }
 
 .sales-right-col {
-  display: grid;
-  gap: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   align-self: start;
-  /* Preview is read-only; prevent it from intercepting clicks over form controls. */
+  position: sticky;
+  top: 0;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+  min-width: 0;
+}
+
+.sale-preview-panel {
   pointer-events: none;
+  padding: 18px;
+}
+
+.sale-shipping-panel {
+  pointer-events: auto;
+  padding: 18px;
+}
+
+.panel-section-head {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+.panel-section-head strong {
+  font-size: 1.05rem;
+  line-height: 1.25;
+}
+
+.panel-section-head .muted {
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.sale-sidebar-summary-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sale-sidebar-summary-grid .stat-card {
+  padding: 12px 14px;
+  border-radius: 16px;
+}
+
+.sale-sidebar-summary-grid .stat-card strong {
+  font-size: 1rem;
+}
+
+.sale-shipping-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.sale-shipping-field-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.sale-shipping-margin {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(15, 118, 110, 0.08);
+  border: 1px solid rgba(15, 118, 110, 0.18);
+  font-size: 0.9rem;
+}
+
+.sale-shipping-margin strong {
+  color: var(--primary-strong);
+  font-size: 1rem;
+}
+
+.gain-loss-modal,
+.gain-loss-modal * {
+  pointer-events: auto;
 }
 
 .panel {
@@ -1482,6 +1561,82 @@ img {
   background: rgba(255, 255, 255, 0.6);
 }
 
+.sale-line-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sale-line-row {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.sale-line-row .field,
+.sale-line-row .checkbox-field {
+  min-width: 0;
+}
+
+.sale-line-row select {
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.sale-line-row-main .sale-line-product {
+  grid-column: span 5;
+}
+
+.sale-line-row-main .sale-line-qty {
+  grid-column: span 2;
+}
+
+.sale-line-row-main .sale-line-unit {
+  grid-column: span 2;
+}
+
+.sale-line-row-main .sale-line-remove {
+  grid-column: span 3;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding-bottom: 2px;
+}
+
+.sale-line-row-pricing,
+.sale-line-row-pricing-meta {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.sale-line-row-pricing > *,
+.sale-line-row-pricing-meta > * {
+  grid-column: auto;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.sale-line-row-pricing-meta .checkbox-field.compact {
+  display: flex;
+  width: 100%;
+  min-height: 52px;
+}
+
+.sale-line-row-pricing-meta .checkbox-field.compact span {
+  line-height: 1.25;
+}
+
+.sale-line-row-pricing-meta .checkbox-field.compact.is-disabled {
+  opacity: 0.55;
+}
+
+.sale-line-row-pricing-meta .checkbox-field.compact.is-disabled span {
+  color: var(--muted);
+}
+
+/* Legacy aliases kept for any older markup */
 .sale-line-grid {
   align-items: end;
   grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -1490,40 +1645,6 @@ img {
 
 .sale-line-grid .field {
   min-width: 0;
-}
-
-.sale-line-grid select {
-  text-overflow: ellipsis;
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.sale-line-grid .span-2 {
-  grid-column: span 4;
-}
-
-.sale-line-grid .field:nth-child(2) {
-  grid-column: span 2;
-}
-
-.sale-line-grid .field:nth-child(3) {
-  grid-column: span 4;
-}
-
-.sale-line-grid .field:nth-child(4) {
-  grid-column: span 2;
-}
-
-.sale-line-grid .checkbox-field.compact {
-  grid-column: 1 / span 9;
-  width: 100%;
-}
-
-.line-actions {
-  grid-column: 10 / -1;
-  display: flex;
-  align-items: end;
-  justify-content: flex-end;
 }
 
 /* -- ProductSearchSelect -- */
@@ -2347,27 +2468,25 @@ img {
     grid-template-columns: 1fr;
   }
 
-  .sale-line-grid {
+  .sale-line-row {
     grid-template-columns: 1fr;
   }
 
-  .sale-line-grid .span-2 {
+  .sale-line-row-main .sale-line-product,
+  .sale-line-row-main .sale-line-qty,
+  .sale-line-row-main .sale-line-unit,
+  .sale-line-row-main .sale-line-remove,
+  .sale-line-row-pricing > *,
+  .sale-line-row-pricing-meta > * {
     grid-column: auto;
   }
 
-  .sale-line-grid .field:nth-child(2),
-  .sale-line-grid .field:nth-child(3),
-  .sale-line-grid .field:nth-child(4) {
-    grid-column: auto;
+  .sale-line-row-pricing,
+  .sale-line-row-pricing-meta {
+    grid-template-columns: 1fr;
   }
 
-  .sale-line-grid .checkbox-field.compact {
-    grid-column: auto;
-    width: 100%;
-  }
-
-  .line-actions {
-    grid-column: auto;
+  .sale-line-row-main .sale-line-remove {
     width: 100%;
     justify-content: stretch;
   }
@@ -2406,23 +2525,35 @@ img {
     grid-template-columns: 1fr;
   }
 
-  .sale-line-grid {
+  .sales-right-col {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .sale-shipping-field-row {
+    grid-template-columns: 1fr;
+  }
+
+  .sale-line-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .sale-line-grid .checkbox-field.compact,
-  .sale-line-grid .line-actions {
+  .sale-line-row-main .sale-line-product,
+  .sale-line-row-main .sale-line-remove {
     grid-column: 1 / -1;
   }
 
-  .sale-line-grid .span-2,
-  .sale-line-grid .field:nth-child(2),
-  .sale-line-grid .field:nth-child(3),
-  .sale-line-grid .field:nth-child(4) {
-    grid-column: span 1;
+  .sale-line-row-pricing,
+  .sale-line-row-pricing-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .sale-line-grid .line-actions {
+  .sale-line-row-pricing-meta .checkbox-field.compact:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .sale-line-row-main .sale-line-remove {
     justify-content: flex-start;
   }
 

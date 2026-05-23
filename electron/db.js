@@ -10,8 +10,10 @@ import {
   calculateAverageCost,
   companyNames,
   defaultTaxSettings,
+  deliveryExpenseCategory,
   expenseCategories,
   formatDateShort,
+  isWalkInChannel,
   productCategories,
   roundMoney,
   saleStatuses,
@@ -457,10 +459,17 @@ function serializeSaleItem(row) {
     vatExemptAmount: roundMoney(row.vat_exempt_amount),
     costing: roundMoney(row.costing),
     shippingFee: roundMoney(row.shipping_fee),
+    shippingCost: roundMoney(row.shipping_cost),
+    isShippingFeeVatExempt: Boolean(row.shipping_fee_vat_exempt),
     totalCost: roundMoney(row.total_cost),
     profit: roundMoney(row.profit),
     createdAt: row.created_at,
-    isVatExempt: (row.vat_exempt_amount ?? 0) > 0
+    isVatExempt: (() => {
+      const gross = roundMoney(row.gross_amount);
+      const exempt = roundMoney(row.vat_exempt_amount);
+      const shipping = roundMoney(row.shipping_fee);
+      return exempt > 0 && exempt > shipping + 0.001 && exempt >= gross - shipping - 0.001;
+    })()
   };
 }
 
@@ -484,6 +493,9 @@ function serializeSaleSummary(row) {
     outputVat: roundMoney(row.output_vat),
     vatExemptAmount: roundMoney(row.vat_exempt_amount),
     profit: roundMoney(row.profit),
+    shippingFee: roundMoney(row.shipping_fee),
+    shippingCost: roundMoney(row.shipping_cost),
+    isShippingFeeVatExempt: Boolean(row.shipping_fee_vat_exempt),
     items: JSON.parse(row.items_json || '[]'),
     itemCount: Number(row.item_count ?? 0),
     createdAt: row.created_at,
@@ -1995,6 +2007,8 @@ function getSaleById(db, id) {
     .all(cleanString(id))
     .map(serializeSaleItem);
 
+  const shippingPurchase = db.prepare('SELECT receipt_number FROM purchases WHERE id = ?').get(getSaleShippingPurchaseId(id));
+
   return {
     ...serializeSaleSummary({
       ...header,
@@ -2003,6 +2017,7 @@ function getSaleById(db, id) {
     customerAddress: header.customer_address,
     customerUsername: header.customer_username,
     customerTin: header.customer_tin,
+    shippingPurchaseReceipt: shippingPurchase?.receipt_number ?? '',
     items
   };
 }
@@ -2079,6 +2094,54 @@ function listSales(db, { search = '', status = '', channel = '', companyName = '
   return db.prepare(sql).all(...params).map(serializeSaleSummary);
 }
 
+function getSaleShippingPurchaseId(saleId) {
+  return `sale-shipping-${cleanString(saleId)}`;
+}
+
+function syncSaleShippingPurchase(db, {
+  saleId,
+  saleDate,
+  companyName,
+  channel,
+  saleReceiptNumber,
+  siNumber,
+  purchaseReceiptNumber,
+  totalShippingCost,
+  status
+}) {
+  const purchaseId = getSaleShippingPurchaseId(saleId);
+  const existing = db.prepare('SELECT id FROM purchases WHERE id = ?').get(purchaseId);
+
+  if (status === 'FAILED' || status === 'Return' || totalShippingCost <= 0) {
+    if (existing) {
+      deletePurchase(db, purchaseId);
+    }
+    return null;
+  }
+
+  const purchaseReceipt = cleanString(purchaseReceiptNumber);
+  if (!purchaseReceipt) {
+    throw new Error('Courier receipt number is required when shipping cost is entered.');
+  }
+
+  const saleReceiptLabel = saleReceiptNumber ? String(saleReceiptNumber) : saleId.slice(0, 8);
+  const siLabel = siNumber ? ` SI ${siNumber}` : '';
+
+  return upsertPurchase(db, {
+    id: purchaseId,
+    company_name: companyName,
+    date: saleDate,
+    supplier_tin: '',
+    supplier_name: channel || 'Courier',
+    receipt_number: purchaseReceipt,
+    address: '',
+    gross_amount: totalShippingCost,
+    is_vat_exempt: true,
+    expense_category: deliveryExpenseCategory,
+    remarks: `Delivery cost for sale #${saleReceiptLabel}${siLabel}`.trim()
+  });
+}
+
 function createSale(db, payload = {}) {
   const stamp = nowIso();
   const saleId = cleanString(payload.id) || createId();
@@ -2091,11 +2154,26 @@ function createSale(db, payload = {}) {
   const poNumber = cleanString(payload.po_number ?? payload.poNumber);
   const invoiceType = cleanString(payload.invoice_type ?? payload.invoiceType) || 'SI';
   const remarks = cleanString(payload.remarks);
+  const applyShipping = !isWalkInChannel(channel);
+  const saleShippingFee = applyShipping ? roundMoney(payload.shipping_fee ?? payload.shippingFee ?? 0) : 0;
+  const saleShippingCost = applyShipping ? roundMoney(payload.shipping_cost ?? payload.shippingCost ?? 0) : 0;
+  const saleShippingFeeVatExempt = applyShipping && asBoolean(
+    payload.shipping_fee_vat_exempt ?? payload.isShippingFeeVatExempt,
+    false
+  );
   const rawItems = Array.isArray(payload.items) ? payload.items : [];
   const items = rawItems.filter((item) => cleanString(item?.product_id ?? item?.productId));
 
   if (items.length === 0) {
     throw new Error('At least one sale item is required.');
+  }
+
+  const shippingPurchaseReceipt = cleanString(
+    payload.shipping_purchase_receipt ?? payload.shippingPurchaseReceipt
+  );
+
+  if (saleShippingCost > 0 && !shippingPurchaseReceipt) {
+    throw new Error('Courier receipt number is required when shipping cost is entered.');
   }
 
   const insertSale = db.prepare(
@@ -2120,6 +2198,9 @@ function createSale(db, payload = {}) {
           output_vat = ?,
           vat_exempt_amount = ?,
           profit = ?,
+          shipping_fee = ?,
+          shipping_cost = ?,
+          shipping_fee_vat_exempt = ?,
           updated_at = ?
       WHERE id = ?
     `
@@ -2129,11 +2210,11 @@ function createSale(db, payload = {}) {
     `
       INSERT INTO sale_items (
         id, sale_id, product_id, qty, unit, unit_price, gross_amount, net_of_vat,
-        output_vat, vat_exempt_amount, costing, shipping_fee, total_cost, profit, created_at
+        output_vat, vat_exempt_amount, costing, shipping_fee, shipping_fee_vat_exempt, shipping_cost, total_cost, profit, created_at
       )
       VALUES (
         @id, @sale_id, @product_id, @qty, @unit, @unit_price, @gross_amount, @net_of_vat,
-        @output_vat, @vat_exempt_amount, @costing, @shipping_fee, @total_cost, @profit, @created_at
+        @output_vat, @vat_exempt_amount, @costing, @shipping_fee, @shipping_fee_vat_exempt, @shipping_cost, @total_cost, @profit, @created_at
       )
     `
   );
@@ -2159,6 +2240,8 @@ function createSale(db, payload = {}) {
       )
     `
   );
+
+  let shippingPurchaseContext = null;
 
   const tx = db.transaction(() => {
     // If updating an existing sale, revert previous inventory impacts first.
@@ -2193,6 +2276,7 @@ function createSale(db, payload = {}) {
     let outputVat = 0;
     let vatExemptAmount = 0;
     let profit = 0;
+    let totalShippingCost = 0;
     const { vatRate } = getTaxSettings(db);
 
     for (const rawItem of items) {
@@ -2216,13 +2300,14 @@ function createSale(db, payload = {}) {
       const unit = cleanString(rawItem.unit) || product.unit || 'pc';
       const pricing = resolveSalePricing(product, rawItem, status);
       const isVatExempt = asBoolean(rawItem.is_vat_exempt ?? rawItem.isVatExempt, Boolean(product.is_vat_exempt));
-      const shippingFee = roundMoney(rawItem.shipping_fee ?? rawItem.shippingFee ?? 0);
       const line = calculateSaleLine({
         qty,
         unitPrice: pricing.unitPrice,
-        shippingFee,
+        shippingFee: 0,
+        shippingCost: 0,
         unitCost: pricing.unitCost,
         isVatExempt,
+        isShippingFeeVatExempt: false,
         status,
         vatRate,
         grossOverride: rawItem.gross_override ?? rawItem.grossOverride
@@ -2267,9 +2352,11 @@ function createSale(db, payload = {}) {
           finalLine = calculateSaleLine({
             qty,
             unitPrice: finalUnitPrice,
-            shippingFee,
+            shippingFee: 0,
+            shippingCost: 0,
             unitCost: hasManualCost ? roundMoney(manualUnitCost) : weightedUnitCost,
             isVatExempt,
+            isShippingFeeVatExempt: false,
             status,
             vatRate,
             grossOverride: rawItem.gross_override ?? rawItem.grossOverride
@@ -2302,7 +2389,9 @@ function createSale(db, payload = {}) {
         output_vat: finalLine.outputVat,
         vat_exempt_amount: finalLine.vatExemptAmount,
         costing: finalLine.costing,
-        shipping_fee: finalLine.shippingFee,
+        shipping_fee: 0,
+        shipping_fee_vat_exempt: 0,
+        shipping_cost: 0,
         total_cost: finalLine.totalCost,
         profit: finalLine.profit,
         created_at: stamp
@@ -2315,18 +2404,57 @@ function createSale(db, payload = {}) {
       profit += finalLine.profit;
     }
 
+    if (applyShipping && (saleShippingFee > 0 || saleShippingCost > 0)) {
+      const shippingLine = calculateSaleLine({
+        qty: 0,
+        unitPrice: 0,
+        shippingFee: saleShippingFee,
+        shippingCost: saleShippingCost,
+        unitCost: 0,
+        isVatExempt: false,
+        isShippingFeeVatExempt: saleShippingFeeVatExempt,
+        status,
+        vatRate
+      });
+      grossAmount += shippingLine.grossAmount;
+      netOfVat += shippingLine.netOfVat;
+      outputVat += shippingLine.outputVat;
+      vatExemptAmount += shippingLine.vatExemptAmount;
+      profit += shippingLine.profit;
+      totalShippingCost = saleShippingCost;
+    }
+
     updateSaleTotals.run(
       roundMoney(grossAmount),
       roundMoney(netOfVat),
       roundMoney(outputVat),
       roundMoney(vatExemptAmount),
       roundMoney(profit),
+      saleShippingFee,
+      saleShippingCost,
+      saleShippingFeeVatExempt ? 1 : 0,
       nowIso(),
       saleId
     );
+
+    shippingPurchaseContext = {
+      saleId,
+      saleDate,
+      companyName,
+      channel,
+      saleReceiptNumber: receiptNumber,
+      siNumber,
+      purchaseReceiptNumber: shippingPurchaseReceipt,
+      totalShippingCost: roundMoney(totalShippingCost),
+      status
+    };
   });
 
   tx();
+
+  if (shippingPurchaseContext) {
+    syncSaleShippingPurchase(db, shippingPurchaseContext);
+  }
 
   return getSaleById(db, saleId);
 }
@@ -2432,6 +2560,11 @@ function deleteSale(db, id) {
 
   const tx = db.transaction(() => {
     revertSaleInventory(db, saleId);
+    const shippingPurchaseId = getSaleShippingPurchaseId(saleId);
+    const linkedPurchase = db.prepare('SELECT id FROM purchases WHERE id = ?').get(shippingPurchaseId);
+    if (linkedPurchase) {
+      deletePurchase(db, shippingPurchaseId);
+    }
     db.prepare('DELETE FROM sales WHERE id = ?').run(saleId);
   });
 

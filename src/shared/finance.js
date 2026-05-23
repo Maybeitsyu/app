@@ -26,13 +26,15 @@ export const productCategories = [
   'Accessories'
 ];
 
+export const deliveryExpenseCategory = 'Delivery Charge & Fee\'s';
+
 export const expenseCategories = [
   'Communication, Light and Water',
   'Fuel & Oil',
   'Repairs & Maintenance',
   'Miscellaneous',
   'Professional Fees',
-  'Delivery Charge & Fee\'s',
+  deliveryExpenseCategory,
   'Transportation and Travel',
   'Representation',
   'Insurance',
@@ -59,6 +61,45 @@ export function toNumber(value, fallback = 0) {
 
 export function roundMoney(value) {
   return Number(toNumber(value).toFixed(2));
+}
+
+export function isWalkInChannel(channel) {
+  const normalized = String(channel || '').trim().toLowerCase().replace(/-/g, ' ');
+  return normalized === 'walk in' || normalized === 'walkin';
+}
+
+/** Products that must not appear on sales line items (fees, FX, services). */
+export function isNonSaleProduct(product) {
+  if (!product) {
+    return true;
+  }
+
+  if (product.isHidden || product.is_hidden) {
+    return true;
+  }
+
+  const name = String(product.name || '').trim().toLowerCase().replace(/-/g, ' ');
+  const code = String(product.code || '').trim().toLowerCase().replace(/-/g, ' ');
+
+  const blockedTerms = [
+    'shipping',
+    'shipping fee',
+    'shippingfee',
+    'delivery charge',
+    'delivery fee',
+    'freight',
+    'courier',
+    'gain and loss',
+    'gain loss',
+    'gain/loss',
+    'foreign exchange',
+    'fx gain',
+    'fx loss',
+    'service fee',
+    'service charge'
+  ];
+
+  return blockedTerms.some((term) => name.includes(term) || code.includes(term));
 }
 
 export function calculateAverageCost(cost, laborCost, packagingCost = 0) {
@@ -156,8 +197,10 @@ export function calculateSaleLine({
   qty = 0,
   unitPrice = 0,
   shippingFee = 0,
+  shippingCost = 0,
   unitCost = 0,
   isVatExempt = false,
+  isShippingFeeVatExempt = false,
   status = 'PAID',
   vatRate = VAT_RATE,
   grossOverride = null
@@ -165,23 +208,82 @@ export function calculateSaleLine({
   const safeQty = status === 'FAILED' || status === 'Return' ? 0 : roundMoney(qty);
   const safeUnitPrice = status === 'FAILED' || status === 'Return' || status === 'Lost' ? 0 : roundMoney(unitPrice);
   const safeShippingFee = status === 'FAILED' || status === 'Return' ? 0 : roundMoney(shippingFee);
+  const safeShippingCost = status === 'FAILED' || status === 'Return' ? 0 : roundMoney(shippingCost);
   const safeUnitCost = roundMoney(unitCost);
-  const grossAmount = grossOverride !== null ? roundMoney(grossOverride) : roundMoney((safeQty * safeUnitPrice) + safeShippingFee);
-  const totalCost = roundMoney(safeQty * safeUnitCost);
-  const vatSplit = isVatExempt || grossAmount <= 0 ? { netOfVat: grossAmount, vatAmount: 0 } : calculateVatFromGross(grossAmount, vatRate);
-  const costVatSplit = isVatExempt || totalCost <= 0 ? { netOfVat: totalCost, vatAmount: 0 } : calculateVatFromGross(totalCost, vatRate);
+  const productGross = roundMoney(safeQty * safeUnitPrice);
+  const grossAmount = grossOverride !== null ? roundMoney(grossOverride) : roundMoney(productGross + safeShippingFee);
+  const productCost = roundMoney(safeQty * safeUnitCost);
+  const totalCost = roundMoney(productCost + safeShippingCost);
+  const costVatSplit = isVatExempt || productCost <= 0 ? { netOfVat: productCost, vatAmount: 0 } : calculateVatFromGross(productCost, vatRate);
+  const shippingMargin = roundMoney(safeShippingFee - safeShippingCost);
+
+  if (grossOverride !== null || grossAmount <= 0) {
+    const lineExempt = isVatExempt || (isShippingFeeVatExempt && productGross <= 0);
+    const vatSplit = lineExempt || grossAmount <= 0
+      ? { netOfVat: grossAmount, vatAmount: 0 }
+      : calculateVatFromGross(grossAmount, vatRate);
+
+    return {
+      qty: safeQty,
+      unitPrice: safeUnitPrice,
+      shippingFee: safeShippingFee,
+      shippingCost: safeShippingCost,
+      shippingMargin,
+      grossAmount,
+      netOfVat: lineExempt ? 0 : vatSplit.netOfVat,
+      outputVat: lineExempt ? 0 : vatSplit.vatAmount,
+      vatExemptAmount: lineExempt ? grossAmount : 0,
+      costing: safeUnitCost,
+      totalCost,
+      profit: roundMoney(grossAmount - vatSplit.vatAmount - costVatSplit.netOfVat - safeShippingCost)
+    };
+  }
+
+  const productExempt = isVatExempt;
+  const shippingExempt = isVatExempt || isShippingFeeVatExempt;
+
+  let productNet = 0;
+  let productVat = 0;
+  let productExemptAmount = 0;
+  let shippingNet = 0;
+  let shippingVat = 0;
+  let shippingExemptAmount = 0;
+
+  if (productExempt || productGross <= 0) {
+    productExemptAmount = productGross;
+  } else {
+    const productSplit = calculateVatFromGross(productGross, vatRate);
+    productNet = productSplit.netOfVat;
+    productVat = productSplit.vatAmount;
+  }
+
+  if (shippingExempt || safeShippingFee <= 0) {
+    shippingExemptAmount = safeShippingFee;
+  } else {
+    const shippingSplit = calculateVatFromGross(safeShippingFee, vatRate);
+    shippingNet = shippingSplit.netOfVat;
+    shippingVat = shippingSplit.vatAmount;
+  }
+
+  const outputVat = roundMoney(productVat + shippingVat);
+  const vatExemptAmount = roundMoney(productExemptAmount + shippingExemptAmount);
+  const netOfVat = productExempt
+    ? roundMoney(shippingExempt ? 0 : shippingNet)
+    : roundMoney(productNet + (shippingExempt ? 0 : shippingNet));
 
   return {
     qty: safeQty,
     unitPrice: safeUnitPrice,
     shippingFee: safeShippingFee,
+    shippingCost: safeShippingCost,
+    shippingMargin,
     grossAmount,
-    netOfVat: isVatExempt ? 0 : vatSplit.netOfVat,
-    outputVat: isVatExempt ? 0 : vatSplit.vatAmount,
-    vatExemptAmount: isVatExempt ? grossAmount : 0,
+    netOfVat,
+    outputVat,
+    vatExemptAmount,
     costing: safeUnitCost,
     totalCost,
-    profit: roundMoney(grossAmount - vatSplit.vatAmount - costVatSplit.netOfVat)
+    profit: roundMoney(grossAmount - outputVat - costVatSplit.netOfVat - safeShippingCost)
   };
 }
 

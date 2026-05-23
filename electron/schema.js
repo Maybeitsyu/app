@@ -91,6 +91,9 @@ export function initializeSchema(db) {
       output_vat REAL NOT NULL DEFAULT 0,
       vat_exempt_amount REAL NOT NULL DEFAULT 0,
       profit REAL NOT NULL DEFAULT 0,
+      shipping_fee REAL NOT NULL DEFAULT 0,
+      shipping_cost REAL NOT NULL DEFAULT 0,
+      shipping_fee_vat_exempt INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -109,6 +112,8 @@ export function initializeSchema(db) {
       vat_exempt_amount REAL NOT NULL DEFAULT 0,
       costing REAL NOT NULL DEFAULT 0,
       shipping_fee REAL NOT NULL DEFAULT 0,
+      shipping_fee_vat_exempt INTEGER NOT NULL DEFAULT 0,
+      shipping_cost REAL NOT NULL DEFAULT 0,
       total_cost REAL NOT NULL DEFAULT 0,
       profit REAL NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL
@@ -371,6 +376,36 @@ export function initializeSchema(db) {
   // Add shipping_fee column to sale_items if it doesn't exist (for migration)
   try {
     db.exec(`ALTER TABLE sale_items ADD COLUMN shipping_fee REAL NOT NULL DEFAULT 0`);
+  } catch (error) {
+    // Column might already exist, ignore
+  }
+
+  try {
+    db.exec(`ALTER TABLE sale_items ADD COLUMN shipping_fee_vat_exempt INTEGER NOT NULL DEFAULT 0`);
+  } catch (error) {
+    // Column might already exist, ignore
+  }
+
+  try {
+    db.exec(`ALTER TABLE sale_items ADD COLUMN shipping_cost REAL NOT NULL DEFAULT 0`);
+  } catch (error) {
+    // Column might already exist, ignore
+  }
+
+  try {
+    db.exec(`ALTER TABLE sales ADD COLUMN shipping_fee REAL NOT NULL DEFAULT 0`);
+  } catch (error) {
+    // Column might already exist, ignore
+  }
+
+  try {
+    db.exec(`ALTER TABLE sales ADD COLUMN shipping_cost REAL NOT NULL DEFAULT 0`);
+  } catch (error) {
+    // Column might already exist, ignore
+  }
+
+  try {
+    db.exec(`ALTER TABLE sales ADD COLUMN shipping_fee_vat_exempt INTEGER NOT NULL DEFAULT 0`);
   } catch (error) {
     // Column might already exist, ignore
   }

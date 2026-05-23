@@ -15,6 +15,8 @@ import {
     roundMoney,
     saleStatuses,
     salesChannels,
+    isWalkInChannel,
+    isNonSaleProduct,
     toNumber,
     toDateInputValue
 } from '../shared/finance.js';
@@ -35,15 +37,18 @@ function ProductSearchSelect({ products, value, onChange, onCreateNew, placehold
 
     const filtered = useMemo(() => {
         const q = search.toLowerCase();
-        return products.filter(p =>
-            p.name.toLowerCase().includes(q) ||
-            p.code.toLowerCase().includes(q)
-        ).slice(0, 50);
+        return products
+            .filter((p) => !isNonSaleProduct(p))
+            .filter((p) =>
+                p.name.toLowerCase().includes(q) ||
+                p.code.toLowerCase().includes(q)
+            )
+            .slice(0, 50);
     }, [products, search]);
 
     const searchTrimmed = search.trim();
     const canQuickAdd = onCreateNew && searchTrimmed.length > 0 && !products.some(
-        p => p.name.toLowerCase() === searchTrimmed.toLowerCase()
+        (p) => !isNonSaleProduct(p) && p.name.toLowerCase() === searchTrimmed.toLowerCase()
     );
 
     useEffect(() => {
@@ -842,6 +847,29 @@ function blankSaleLine(product = null) {
     };
 }
 
+function resolveSaleShippingFromRecord(sale) {
+    const headerFee = toNumber(sale?.shippingFee ?? sale?.shipping_fee, 0);
+    const headerCost = toNumber(sale?.shippingCost ?? sale?.shipping_cost, 0);
+    if (headerFee > 0 || headerCost > 0) {
+        return {
+            shipping_fee: headerFee ? String(headerFee) : '',
+            shipping_cost: headerCost ? String(headerCost) : '',
+            shipping_fee_vat_exempt: Boolean(sale?.isShippingFeeVatExempt ?? sale?.shipping_fee_vat_exempt)
+        };
+    }
+
+    const items = Array.isArray(sale?.items) ? sale.items : [];
+    const legacyFee = items.reduce((sum, item) => sum + toNumber(item.shippingFee ?? item.shipping_fee, 0), 0);
+    const legacyCost = items.reduce((sum, item) => sum + toNumber(item.shippingCost ?? item.shipping_cost, 0), 0);
+    const legacyVatExempt = items.some((item) => Boolean(item.isShippingFeeVatExempt ?? item.shipping_fee_vat_exempt));
+
+    return {
+        shipping_fee: legacyFee ? String(legacyFee) : '',
+        shipping_cost: legacyCost ? String(legacyCost) : '',
+        shipping_fee_vat_exempt: legacyVatExempt
+    };
+}
+
 function blankSaleForm(customerId = '') {
     return {
         id: '',
@@ -854,22 +882,30 @@ function blankSaleForm(customerId = '') {
         po_number: '',
         invoice_type: 'SI',
         remarks: '',
+        shipping_fee: '',
+        shipping_cost: '',
+        shipping_purchase_receipt: '',
+        shipping_fee_vat_exempt: false,
         items: [blankSaleLine()]
     };
 }
 
 function saleToForm(sale) {
+    const shipping = resolveSaleShippingFromRecord(sale);
+
     return {
         id: sale.id,
         company_name: sale.companyName ?? companyNames[0],
         date: sale.date ?? toDateInputValue(),
         si_number: sale.siNumber ?? '',
+        shipping_purchase_receipt: sale.shippingPurchaseReceipt ? String(sale.shippingPurchaseReceipt) : '',
         customer_id: sale.customerId ?? '',
         channel: sale.channel ?? salesChannels[1],
         status: sale.status ?? 'PAID',
         po_number: sale.poNumber ?? '',
         invoice_type: sale.invoiceType ?? 'SI',
         remarks: sale.remarks ?? '',
+        ...shipping,
         items: Array.isArray(sale.items) && sale.items.length > 0
             ? sale.items.map((item) => ({
                 key: createLocalId('sale-line'),
@@ -1119,7 +1155,7 @@ function getChannelStyle(channel) {
     return getHashStyle(channel);
 }
 
-function summarizeSalePreview(items, products, status, vatRate = defaultTaxSettings.vatRate, originalItems = []) {
+function summarizeSalePreview(items, products, status, vatRate = defaultTaxSettings.vatRate, originalItems = [], saleOptions = {}) {
     const summary = {
         grossAmount: 0,
         netOfVat: 0,
@@ -1127,8 +1163,14 @@ function summarizeSalePreview(items, products, status, vatRate = defaultTaxSetti
         vatExemptAmount: 0,
         totalCost: 0,
         profit: 0,
+        shippingMargin: 0,
         lines: []
     };
+
+    const applyShipping = !isWalkInChannel(saleOptions.channel);
+    const saleShippingFee = applyShipping ? toNumber(saleOptions.shipping_fee, 0) : 0;
+    const saleShippingCost = applyShipping ? toNumber(saleOptions.shipping_cost, 0) : 0;
+    const saleShippingVatExempt = applyShipping && Boolean(saleOptions.shipping_fee_vat_exempt);
 
     for (const item of (items || [])) {
         const product = (products || []).find((entry) => String(entry?.id) === String(item?.product_id));
@@ -1153,13 +1195,14 @@ function summarizeSalePreview(items, products, status, vatRate = defaultTaxSetti
         const qty = status === 'FAILED' ? 0 : toNumber(item.qty, 1);
         const unitPrice = status === 'FAILED' ? 0 : toNumber(item.unit_price, getProductUnitPrice(product, lineUnit, qty));
         const unitCost = toNumber(item.unit_cost, getProductUnitCost(product, lineUnit, qty));
-        const shippingFee = toNumber(item.shipping_fee, 0);
         const line = calculateSaleLine({
             qty,
             unitPrice,
-            shippingFee,
+            shippingFee: 0,
+            shippingCost: 0,
             unitCost,
             isVatExempt: item.is_vat_exempt ?? product.is_vat_exempt ?? product.isVatExempt,
+            isShippingFeeVatExempt: false,
             status,
             vatRate,
             grossOverride: item.gross_override
@@ -1195,6 +1238,27 @@ function summarizeSalePreview(items, products, status, vatRate = defaultTaxSetti
             currentBatchStock: product.currentBatchStock ?? product.stockQty,
             ...line
         });
+    }
+
+    if (applyShipping && (saleShippingFee > 0 || saleShippingCost > 0)) {
+        const shippingLine = calculateSaleLine({
+            qty: 0,
+            unitPrice: 0,
+            shippingFee: saleShippingFee,
+            shippingCost: saleShippingCost,
+            unitCost: 0,
+            isVatExempt: false,
+            isShippingFeeVatExempt: saleShippingVatExempt,
+            status,
+            vatRate
+        });
+        summary.grossAmount += shippingLine.grossAmount;
+        summary.netOfVat += shippingLine.netOfVat;
+        summary.outputVat += shippingLine.outputVat;
+        summary.vatExemptAmount += shippingLine.vatExemptAmount;
+        summary.totalCost += shippingLine.totalCost;
+        summary.profit += shippingLine.profit;
+        summary.shippingMargin = shippingLine.shippingMargin;
     }
 
     return summary;
@@ -2764,13 +2828,36 @@ function SalesTab({
         return sales.find(s => s.id === form.id);
     }, [sales, form.id]);
 
-    const preview = summarizeSalePreview(form.items, products, form.status, taxSettings?.vatRate, originalSale?.items);
+    const salesProducts = useMemo(
+        () => (products || []).filter((product) => !isNonSaleProduct(product)),
+        [products]
+    );
+    const showShippingFields = !isWalkInChannel(form.channel);
+    const preview = summarizeSalePreview(
+        form.items,
+        products,
+        form.status,
+        taxSettings?.vatRate,
+        originalSale?.items,
+        {
+            channel: form.channel,
+            shipping_fee: form.shipping_fee,
+            shipping_cost: form.shipping_cost,
+            shipping_fee_vat_exempt: form.shipping_fee_vat_exempt
+        }
+    );
     const validItems = (form.items || []).filter((item) => item.product_id);
     const overStockItem = preview.lines.find((line) => line.isOverStock);
     let saveBlockerMessage = '';
 
     if (!form.date) {
         saveBlockerMessage = 'Sale date is required.';
+    } else if (
+        showShippingFields
+        && toNumber(form.shipping_cost, 0) > 0
+        && !String(form.shipping_purchase_receipt ?? '').trim()
+    ) {
+        saveBlockerMessage = 'Courier receipt number is required when shipping cost is entered.';
     } else if (validItems.length === 0) {
         saveBlockerMessage = 'Add at least one product line before saving.';
     } else if (preview.lines.some(l => l.qty <= 0 && form.status !== 'FAILED')) {
@@ -2907,7 +2994,19 @@ function SalesTab({
                                                     placeholder="Type custom channel..."
                                                     value={form.channel}
                                                     autoFocus
-                                                    onChange={(event) => setForm({ ...form, channel: event.target.value })}
+                                                    onChange={(event) => {
+                                                        const nextChannel = event.target.value;
+                                                        setForm({
+                                                            ...form,
+                                                            channel: nextChannel,
+                                                            ...(isWalkInChannel(nextChannel) ? {
+                                                                shipping_fee: '',
+                                                                shipping_cost: '',
+                                                                shipping_purchase_receipt: '',
+                                                                shipping_fee_vat_exempt: false
+                                                            } : {})
+                                                        });
+                                                    }}
                                                 />
                                                 <button
                                                     className="button ghost"
@@ -2930,7 +3029,17 @@ function SalesTab({
                                                         setCustomChannelInput(true);
                                                         setForm({ ...form, channel: '' });
                                                     } else {
-                                                        setForm({ ...form, channel: event.target.value });
+                                                        const nextChannel = event.target.value;
+                                                        setForm({
+                                                            ...form,
+                                                            channel: nextChannel,
+                                                            ...(isWalkInChannel(nextChannel) ? {
+                                                                shipping_fee: '',
+                                                                shipping_cost: '',
+                                                                shipping_purchase_receipt: '',
+                                                                shipping_fee_vat_exempt: false
+                                                            } : {})
+                                                        });
                                                     }
                                                 }}
                                             >
@@ -3029,122 +3138,113 @@ function SalesTab({
                                                 }}>
                                                     Item #{index + 1}
                                                 </div>
-                                                <div className="field-grid sale-line-grid" style={{ gridTemplateColumns: 'repeat(12, minmax(0, 1fr))' }}>
-                                                    <div className="field" style={{ gridColumn: 'span 5' }}>
-                                                        <span>Product <span style={{ color: 'var(--danger)' }}>*</span></span>
-                                                        <div className="stack-h" style={{ gap: '6px', alignItems: 'stretch' }}>
-                                                            <div style={{ flex: 1 }}>
-                                                                <ProductSearchSelect
-                                                                    products={products}
-                                                                    value={item.product_id}
-                                                                    onChange={(val) => selectProduct(index, val)}
-                                                                    onCreateNew={(name) => onCreateProduct(index, name)}
-                                                                />
+                                                <div className="sale-line-fields">
+                                                    <div className="sale-line-row sale-line-row-main">
+                                                        <div className="field sale-line-product">
+                                                            <span>Product <span style={{ color: 'var(--danger)' }}>*</span></span>
+                                                            <div className="stack-h" style={{ gap: '6px', alignItems: 'stretch' }}>
+                                                                <div style={{ flex: 1 }}>
+                                                                    <ProductSearchSelect
+                                                                        products={salesProducts}
+                                                                        value={item.product_id}
+                                                                        onChange={(val) => selectProduct(index, val)}
+                                                                        onCreateNew={(name) => onCreateProduct(index, name)}
+                                                                    />
+                                                                </div>
+                                                                <button
+                                                                    className="button secondary"
+                                                                    type="button"
+                                                                    title="Create new product"
+                                                                    style={{ padding: '0 12px', minHeight: '38px', borderRadius: '12px', flexShrink: 0 }}
+                                                                    onClick={() => onCreateProduct(index, '')}
+                                                                >
+                                                                    ＋
+                                                                </button>
                                                             </div>
-                                                            <button
-                                                                className="button secondary"
-                                                                type="button"
-                                                                title="Create new product"
-                                                                style={{ padding: '0 12px', minHeight: '38px', borderRadius: '12px', flexShrink: 0 }}
-                                                                onClick={() => onCreateProduct(index, '')}
+                                                        </div>
+                                                        <label className="field sale-line-qty">
+                                                            <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                                                                <span>Qty <span style={{ color: 'var(--danger)' }}>*</span></span>
+                                                                {preview.lines[index]?.isOverStock && (
+                                                                    <span style={{ fontSize: '0.72rem', color: 'var(--danger)', fontWeight: 700 }}>
+                                                                        ⚠ {formatQuantity(preview.lines[index].availableStock)} left
+                                                                    </span>
+                                                                )}
+                                                            </span>
+                                                            <input
+                                                                className={`input ${preview.lines[index]?.isOverStock ? 'input-danger' : ''}`}
+                                                                type="number"
+                                                                step="0.01"
+                                                                value={item.qty}
+                                                                onChange={(event) => updateLine(index, { qty: event.target.value, gross_override: null })}
+                                                            />
+                                                        </label>
+                                                        <label className="field sale-line-unit">
+                                                            <span>Unit</span>
+                                                            <select
+                                                                className="select"
+                                                                value={item.unit}
+                                                                onChange={(event) => updateLineUnit(index, event.target.value)}
                                                             >
-                                                                ＋
+                                                                <option value={item.unit}>{item.unit}</option>
+                                                                {getProductSaleUnitOptions(products.find(p => p.id === item.product_id)).filter(u => u !== item.unit).map(u => (
+                                                                    <option key={u} value={u}>{u}</option>
+                                                                ))}
+                                                            </select>
+                                                        </label>
+                                                        <div className="sale-line-remove">
+                                                            <button className="button ghost" type="button" onClick={() => removeLine(index)}>
+                                                                Remove
                                                             </button>
                                                         </div>
                                                     </div>
-                                                    <label className="field" style={{ gridColumn: 'span 2' }}>
-                                                        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                                                            <span>Qty <span style={{ color: 'var(--danger)' }}>*</span></span>
-                                                            {preview.lines[index]?.isOverStock && (
-                                                                <span style={{ fontSize: '0.72rem', color: 'var(--danger)', fontWeight: 700 }}>
-                                                                    ⚠ {formatQuantity(preview.lines[index].availableStock)} left
-                                                                </span>
-                                                            )}
-                                                        </span>
-                                                        <input
-                                                            className={`input ${preview.lines[index]?.isOverStock ? 'input-danger' : ''}`}
-                                                            type="number"
-                                                            step="0.01"
-                                                            value={item.qty}
-                                                            onChange={(event) => updateLine(index, { qty: event.target.value, gross_override: null })}
-                                                        />
-                                                    </label>
-                                                    <label className="field" style={{ gridColumn: 'span 2' }}>
-                                                        <span>Unit</span>
-                                                        <select
-                                                            className="select"
-                                                            value={item.unit}
-                                                            onChange={(event) => updateLineUnit(index, event.target.value)}
-                                                        >
-                                                            <option value={item.unit}>{item.unit}</option>
-                                                            {getProductSaleUnitOptions(products.find(p => p.id === item.product_id)).filter(u => u !== item.unit).map(u => (
-                                                                <option key={u} value={u}>{u}</option>
-                                                            ))}
-                                                        </select>
-                                                    </label>
-                                                    <div className="line-actions" style={{ gridColumn: 'span 3', display: 'flex', alignItems: 'end', justifyContent: 'flex-end', paddingBottom: '10px' }}>
-                                                        <button className="button ghost" type="button" onClick={() => removeLine(index)}>
-                                                            Remove
-                                                        </button>
-                                                    </div>
 
-                                                    {/* Second row of fields */}
-                                                    <label className="field" style={{ gridColumn: 'span 3' }}>
-                                                        <span>Unit price</span>
-                                                        <input
-                                                            className="input"
-                                                            type="number"
-                                                            step="0.01"
-                                                            value={item.unit_price !== '' && item.unit_price !== undefined ? item.unit_price : (roundMoney(preview.lines[index]?.unitPrice) ?? '')}
-                                                            onChange={(event) => updateLine(index, { unit_price: event.target.value, gross_override: null })}
-                                                        />
-                                                    </label>
-                                                    <label className="field" style={{ gridColumn: 'span 3' }}>
-                                                        <span>Unit cost</span>
-                                                        <input
-                                                            className="input"
-                                                            type="number"
-                                                            step="0.01"
-                                                            value={item.unit_cost !== '' && item.unit_cost !== undefined ? item.unit_cost : (roundMoney(preview.lines[index]?.costing) ?? '')}
-                                                            onChange={(event) => updateLine(index, { unit_cost: event.target.value })}
-                                                        />
-                                                    </label>
-                                                    <label className="field" style={{ gridColumn: 'span 3' }}>
-                                                        <span>Shipping fee</span>
-                                                        <input
-                                                            className="input"
-                                                            type="number"
-                                                            step="0.01"
-                                                            min="0"
-                                                            placeholder="0"
-                                                            value={item.shipping_fee !== '' && item.shipping_fee !== undefined ? item.shipping_fee : ''}
-                                                            onChange={(event) => updateLine(index, { shipping_fee: event.target.value, gross_override: null })}
-                                                        />
-                                                    </label>
-                                                    <label className="field" style={{ gridColumn: 'span 3' }}>
-                                                        <span>Total price</span>
-                                                        <input
-                                                            className="input"
-                                                            type="number"
-                                                            step="0.01"
-                                                            value={item.total_price !== undefined && item.total_price !== '' ? item.total_price : (roundMoney(preview.lines[index]?.grossAmount) ?? '')}
-                                                            onChange={(event) => {
-                                                                const val = event.target.value;
-                                                                updateLine(index, {
-                                                                    total_price: val,
-                                                                    gross_override: val !== '' ? parseFloat(val) : null
-                                                                });
-                                                            }}
-                                                        />
-                                                    </label>
-                                                    <label className="checkbox-field compact" style={{ gridColumn: 'span 3', alignSelf: 'end' }}>
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={Boolean(item.is_vat_exempt)}
-                                                            onChange={(event) => updateLine(index, { is_vat_exempt: event.target.checked })}
-                                                        />
-                                                        <span>VAT exempt</span>
-                                                    </label>
+                                                    <div className="sale-line-row sale-line-row-pricing">
+                                                        <label className="field">
+                                                            <span>Unit price</span>
+                                                            <input
+                                                                className="input"
+                                                                type="number"
+                                                                step="0.01"
+                                                                value={item.unit_price !== '' && item.unit_price !== undefined ? item.unit_price : (roundMoney(preview.lines[index]?.unitPrice) ?? '')}
+                                                                onChange={(event) => updateLine(index, { unit_price: event.target.value, gross_override: null })}
+                                                            />
+                                                        </label>
+                                                        <label className="field">
+                                                            <span>Unit cost</span>
+                                                            <input
+                                                                className="input"
+                                                                type="number"
+                                                                step="0.01"
+                                                                value={item.unit_cost !== '' && item.unit_cost !== undefined ? item.unit_cost : (roundMoney(preview.lines[index]?.costing) ?? '')}
+                                                                onChange={(event) => updateLine(index, { unit_cost: event.target.value })}
+                                                            />
+                                                        </label>
+                                                        <label className="field">
+                                                            <span>Total price</span>
+                                                            <input
+                                                                className="input"
+                                                                type="number"
+                                                                step="0.01"
+                                                                value={item.total_price !== undefined && item.total_price !== '' ? item.total_price : (roundMoney(preview.lines[index]?.grossAmount) ?? '')}
+                                                                onChange={(event) => {
+                                                                    const val = event.target.value;
+                                                                    updateLine(index, {
+                                                                        total_price: val,
+                                                                        gross_override: val !== '' ? parseFloat(val) : null
+                                                                    });
+                                                                }}
+                                                            />
+                                                        </label>
+                                                        <label className="checkbox-field compact">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={Boolean(item.is_vat_exempt)}
+                                                                onChange={(event) => updateLine(index, { is_vat_exempt: event.target.checked })}
+                                                            />
+                                                            <span>VAT exempt</span>
+                                                        </label>
+                                                    </div>
                                                 </div>
                                             </div>
                                         );
@@ -3162,9 +3262,10 @@ function SalesTab({
                             </form>
 
                             <div className="sales-right-col">
-                                <div style={{ padding: '0 4px', marginBottom: '16px' }}>
-                                    <strong style={{ display: 'block', fontSize: '1.05rem', marginBottom: '4px' }}>Sale preview</strong>
-                                    <span className="muted" style={{ fontSize: '0.9rem' }}>What this transaction will look like when saved.</span>
+                                <div className="panel sale-preview-panel">
+                                <div className="panel-section-head">
+                                    <strong>Sale preview</strong>
+                                    <span className="muted">Totals and line breakdown for this sale.</span>
                                 </div>
                                 {preview.lines.some(line => line.isOverStock) && (
                                     <div style={{
@@ -3197,10 +3298,10 @@ function SalesTab({
                                     />
                                 ) : (
                                     <div className="preview-stack">
-                                        <div className="summary-grid">
+                                        <div className="summary-grid sale-sidebar-summary-grid">
                                             <MetricCard label="Gross" value={formatCurrency(preview.grossAmount)} tone="primary" />
                                             <MetricCard label="Output VAT" value={formatCurrency(preview.outputVat)} tone="warning" />
-                                            <MetricCard label="Net of Vat:" value={formatCurrency(preview.netOfVat)} tone="info" />
+                                            <MetricCard label="Net of VAT" value={formatCurrency(preview.netOfVat)} tone="info" />
                                             <MetricCard label="Profit" value={formatCurrency(preview.profit)} tone="success" />
                                         </div>
                                         <div className="preview-breakdown">
@@ -3249,6 +3350,81 @@ function SalesTab({
                                         </div>
                                     </div>
                                 )}
+                                </div>
+
+                                {showShippingFields ? (
+                                    <div className="panel sale-shipping-panel">
+                                        <div className="panel-section-head">
+                                            <strong>Shipping</strong>
+                                            <span className="muted">One charge for the whole sale (channel: {form.channel || '—'}).</span>
+                                        </div>
+                                        <div className="sale-shipping-fields">
+                                            <label className="field">
+                                                <span>
+                                                    Receipt number (courier OR)
+                                                    {toNumber(form.shipping_cost, 0) > 0 ? (
+                                                        <span style={{ color: 'var(--danger)' }}> *</span>
+                                                    ) : null}
+                                                </span>
+                                                <input
+                                                    className="input"
+                                                    type="text"
+                                                    placeholder="OR / Invoice # from courier"
+                                                    value={form.shipping_purchase_receipt ?? ''}
+                                                    onChange={(event) => setForm({ ...form, shipping_purchase_receipt: event.target.value })}
+                                                />
+                                                <span className="muted" style={{ fontSize: '0.8rem', marginTop: '4px' }}>
+                                                    Saved to Purchases under Delivery Charge &amp; Fee&apos;s.
+                                                </span>
+                                            </label>
+                                            <div className="sale-shipping-field-row">
+                                                <label className="field">
+                                                    <span>Fee (customer pays)</span>
+                                                    <input
+                                                        className="input"
+                                                        type="number"
+                                                        step="0.01"
+                                                        min="0"
+                                                        placeholder="0"
+                                                        value={form.shipping_fee !== '' && form.shipping_fee !== undefined ? form.shipping_fee : ''}
+                                                        onChange={(event) => setForm({
+                                                            ...form,
+                                                            shipping_fee: event.target.value,
+                                                            shipping_fee_vat_exempt: event.target.value ? form.shipping_fee_vat_exempt : false
+                                                        })}
+                                                    />
+                                                </label>
+                                                <label className="field">
+                                                    <span>Cost (courier)</span>
+                                                    <input
+                                                        className="input"
+                                                        type="number"
+                                                        step="0.01"
+                                                        min="0"
+                                                        placeholder="0"
+                                                        value={form.shipping_cost !== '' && form.shipping_cost !== undefined ? form.shipping_cost : ''}
+                                                        onChange={(event) => setForm({ ...form, shipping_cost: event.target.value })}
+                                                    />
+                                                </label>
+                                            </div>
+                                            <label className={`checkbox-field compact ${!toNumber(form.shipping_fee, 0) ? 'is-disabled' : ''}`}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={Boolean(form.shipping_fee_vat_exempt)}
+                                                    disabled={!toNumber(form.shipping_fee, 0)}
+                                                    onChange={(event) => setForm({ ...form, shipping_fee_vat_exempt: event.target.checked })}
+                                                />
+                                                <span>Shipping VAT exempt</span>
+                                            </label>
+                                            {(toNumber(form.shipping_fee, 0) > 0 || toNumber(form.shipping_cost, 0) > 0) ? (
+                                                <div className="sale-shipping-margin">
+                                                    <span>Shipping margin</span>
+                                                    <strong>{formatCurrency(preview.shippingMargin)}</strong>
+                                                </div>
+                                            ) : null}
+                                        </div>
+                                    </div>
+                                ) : null}
                             </div>
                         </div>
                     </div>
@@ -4483,8 +4659,23 @@ function GainLossTab({ api, flash, companyNames }) {
         toDate: new Date().toISOString().slice(0, 10),
     });
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [formSession, setFormSession] = useState(0);
     const [selectedIds, setSelectedIds] = useState(new Set());
-    const emptyForm = {
+    const [pendingDeleteId, setPendingDeleteId] = useState(null);
+    const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
+    const firstFieldRef = useRef(null);
+
+    const createEmptyForm = useCallback(() => ({
+        id: '',
+        companyName: filters.companyName || companyNames[0] || '',
+        date: new Date().toISOString().slice(0, 10),
+        voucherNo: '',
+        supplierName: '',
+        amountPaid: '',
+        landedCost: '',
+    }), [companyNames, filters.companyName]);
+
+    const [form, setForm] = useState(() => ({
         id: '',
         companyName: companyNames[0] || '',
         date: new Date().toISOString().slice(0, 10),
@@ -4492,8 +4683,7 @@ function GainLossTab({ api, flash, companyNames }) {
         supplierName: '',
         amountPaid: '',
         landedCost: '',
-    };
-    const [form, setForm] = useState(emptyForm);
+    }));
     const [saving, setSaving] = useState(false);
 
     const loadData = useCallback(async () => {
@@ -4521,11 +4711,24 @@ function GainLossTab({ api, flash, companyNames }) {
     const totalGain = roundMoney(filtered.reduce((s, t) => s + t.gain, 0));
     const totalLoss = roundMoney(filtered.reduce((s, t) => s + t.loss, 0));
 
+    useEffect(() => {
+        if (!isModalOpen) {
+            return;
+        }
+        const timer = window.setTimeout(() => {
+            firstFieldRef.current?.focus();
+        }, 50);
+        return () => window.clearTimeout(timer);
+    }, [isModalOpen, formSession]);
+
     const openAdd = () => {
-        setForm({ ...emptyForm, companyName: filters.companyName || companyNames[0] || '' });
+        setSaving(false);
+        setForm(createEmptyForm());
+        setFormSession((current) => current + 1);
         setIsModalOpen(true);
     };
     const openEdit = (t) => {
+        setSaving(false);
         setForm({
             id: t.id,
             companyName: t.companyName,
@@ -4535,9 +4738,14 @@ function GainLossTab({ api, flash, companyNames }) {
             amountPaid: String(t.amountPaid),
             landedCost: String(t.landedCost),
         });
+        setFormSession((current) => current + 1);
         setIsModalOpen(true);
     };
-    const closeModal = () => { setIsModalOpen(false); setForm(emptyForm); };
+    const closeModal = () => {
+        setIsModalOpen(false);
+        setSaving(false);
+        setForm(createEmptyForm());
+    };
 
     const handleSave = async () => {
         if (!form.supplierName.trim()) { flash('Supplier name is required.', 'warning'); return; }
@@ -4563,26 +4771,35 @@ function GainLossTab({ api, flash, companyNames }) {
     };
 
     const handleDelete = async (id) => {
-        if (!confirm('Delete this transaction?')) return;
         try {
             await api.fct.delete(id);
+            if (isModalOpen && form.id === id) {
+                closeModal();
+            }
             flash('Transaction deleted.', 'success');
             loadData();
         } catch (err) {
             flash(err.message || 'Delete failed.', 'danger');
+        } finally {
+            setPendingDeleteId(null);
         }
     };
 
     const handleBulkDelete = async () => {
         if (selectedIds.size === 0) return;
-        if (!confirm(`Delete ${selectedIds.size} transaction(s)?`)) return;
+        const ids = [...selectedIds];
         try {
-            await api.fct.bulkDelete([...selectedIds]);
+            await api.fct.bulkDelete(ids);
+            if (isModalOpen && ids.includes(form.id)) {
+                closeModal();
+            }
             setSelectedIds(new Set());
-            flash(`${selectedIds.size} transaction(s) deleted.`, 'success');
+            flash(`${ids.length} transaction(s) deleted.`, 'success');
             loadData();
         } catch (err) {
             flash(err.message || 'Bulk delete failed.', 'danger');
+        } finally {
+            setPendingBulkDelete(false);
         }
     };
 
@@ -4643,11 +4860,11 @@ function GainLossTab({ api, flash, companyNames }) {
                     onChange={e => setSearch(e.target.value)}
                 />
                 <button className="button primary" onClick={openAdd}>+ Add Transaction</button>
-                {selectedIds.size > 0 && (
-                    <button className="button danger" onClick={handleBulkDelete}>
+                {selectedIds.size > 0 ? (
+                    <button className="button danger" type="button" onClick={() => setPendingBulkDelete(true)}>
                         Delete ({selectedIds.size})
                     </button>
-                )}
+                ) : null}
             </div>
 
             {/* ── Summary Cards ── */}
@@ -4710,7 +4927,7 @@ function GainLossTab({ api, flash, companyNames }) {
                                         <td>
                                             <div className="action-group">
                                                 <button className="button secondary small" onClick={() => openEdit(t)}>Edit</button>
-                                                <button className="button danger small" onClick={() => handleDelete(t.id)}>Delete</button>
+                                                <button className="button danger small" type="button" onClick={() => setPendingDeleteId(t.id)}>Delete</button>
                                             </div>
                                         </td>
                                     </tr>
@@ -4731,10 +4948,49 @@ function GainLossTab({ api, flash, companyNames }) {
                 )}
             </Panel>
 
+            {pendingDeleteId ? (
+                <div className="confirm-overlay" style={{ zIndex: 10000 }}>
+                    <div className="confirm-dialog">
+                        <h3>Delete transaction?</h3>
+                        <p>This foreign currency entry will be removed.</p>
+                        <div className="confirm-actions">
+                            <button className="button danger" type="button" onClick={() => handleDelete(pendingDeleteId)}>Delete</button>
+                            <button className="button secondary" type="button" onClick={() => setPendingDeleteId(null)}>Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+
+            {pendingBulkDelete ? (
+                <div className="confirm-overlay" style={{ zIndex: 10000 }}>
+                    <div className="confirm-dialog">
+                        <h3>Delete {selectedIds.size} transaction(s)?</h3>
+                        <p>This cannot be undone.</p>
+                        <div className="confirm-actions">
+                            <button className="button danger" type="button" onClick={handleBulkDelete}>Delete</button>
+                            <button className="button secondary" type="button" onClick={() => setPendingBulkDelete(false)}>Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            ) : null}
+
             {/* ── Add/Edit Modal ── */}
-            {isModalOpen && (
-                <div className="modal-backdrop">
-                    <div className="modal-box" style={{ maxWidth: 520 }}>
+            {isModalOpen ? (
+                <div
+                    className="modal-backdrop"
+                    style={{ zIndex: 9998 }}
+                    onMouseDown={(event) => {
+                        if (event.target === event.currentTarget) {
+                            closeModal();
+                        }
+                    }}
+                >
+                    <div
+                        key={`gain-loss-form-${formSession}`}
+                        className="modal-box gain-loss-modal"
+                        style={{ maxWidth: 520, pointerEvents: 'auto' }}
+                        onMouseDown={(event) => event.stopPropagation()}
+                    >
                         <div className="modal-header">
                             <h3 className="modal-title">{form.id ? 'Edit Transaction' : 'Add Transaction'}</h3>
                             <button className="modal-close" type="button" onClick={closeModal}>✕</button>
@@ -4742,43 +4998,69 @@ function GainLossTab({ api, flash, companyNames }) {
 
                         <div className="stack" style={{ gap: '1rem', marginTop: '1rem' }}>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                                <label className="label-group">
+                                <label className="field">
                                     <span>Date</span>
-                                    <input className="input" type="date" value={form.date}
-                                        onChange={e => setForm({ ...form, date: e.target.value })} />
+                                    <input
+                                        ref={firstFieldRef}
+                                        className="input"
+                                        type="date"
+                                        value={form.date}
+                                        onChange={(e) => setForm({ ...form, date: e.target.value })}
+                                    />
                                 </label>
-                                <label className="label-group">
+                                <label className="field">
                                     <span>Company</span>
-                                    <select className="select" value={form.companyName}
-                                        onChange={e => setForm({ ...form, companyName: e.target.value })}>
-                                        {companyNames.map(c => <option key={c} value={c}>{c}</option>)}
+                                    <select
+                                        className="select"
+                                        value={form.companyName}
+                                        onChange={(e) => setForm({ ...form, companyName: e.target.value })}
+                                    >
+                                        {companyNames.map((c) => <option key={c} value={c}>{c}</option>)}
                                     </select>
                                 </label>
                             </div>
-                            <label className="label-group">
+                            <label className="field">
                                 <span>Voucher No.</span>
-                                <input className="input" type="text" placeholder="e.g. 12926001"
+                                <input
+                                    className="input"
+                                    type="text"
+                                    placeholder="e.g. 12926001"
                                     value={form.voucherNo}
-                                    onChange={e => setForm({ ...form, voucherNo: e.target.value })} />
+                                    onChange={(e) => setForm({ ...form, voucherNo: e.target.value })}
+                                />
                             </label>
-                            <label className="label-group">
+                            <label className="field">
                                 <span>Supplier Name <span style={{ color: 'var(--danger)' }}>*</span></span>
-                                <input className="input" type="text" placeholder="e.g. SCHILLS / LEVY"
+                                <input
+                                    className="input"
+                                    type="text"
+                                    placeholder="e.g. SCHILLS / LEVY"
                                     value={form.supplierName}
-                                    onChange={e => setForm({ ...form, supplierName: e.target.value })} />
+                                    onChange={(e) => setForm({ ...form, supplierName: e.target.value })}
+                                />
                             </label>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                                <label className="label-group">
+                                <label className="field">
                                     <span>Amount Paid (₱)</span>
-                                    <input className="input" type="number" step="0.01" placeholder="0.00"
+                                    <input
+                                        className="input"
+                                        type="number"
+                                        step="0.01"
+                                        placeholder="0.00"
                                         value={form.amountPaid}
-                                        onChange={e => setForm({ ...form, amountPaid: e.target.value })} />
+                                        onChange={(e) => setForm({ ...form, amountPaid: e.target.value })}
+                                    />
                                 </label>
-                                <label className="label-group">
+                                <label className="field">
                                     <span>Landed Cost (₱)</span>
-                                    <input className="input" type="number" step="0.01" placeholder="0.00"
+                                    <input
+                                        className="input"
+                                        type="number"
+                                        step="0.01"
+                                        placeholder="0.00"
                                         value={form.landedCost}
-                                        onChange={e => setForm({ ...form, landedCost: e.target.value })} />
+                                        onChange={(e) => setForm({ ...form, landedCost: e.target.value })}
+                                    />
                                 </label>
                             </div>
 
@@ -4807,14 +5089,14 @@ function GainLossTab({ api, flash, companyNames }) {
                         </div>
 
                         <div className="form-actions" style={{ marginTop: '1.5rem' }}>
-                            <button className="button primary" onClick={handleSave} disabled={saving}>
+                            <button className="button primary" type="button" onClick={handleSave} disabled={saving}>
                                 {saving ? 'Saving…' : form.id ? 'Update' : 'Add Transaction'}
                             </button>
-                            <button className="button secondary" onClick={closeModal} disabled={saving}>Cancel</button>
+                            <button className="button secondary" type="button" onClick={closeModal} disabled={saving}>Cancel</button>
                         </div>
                     </div>
                 </div>
-            )}
+            ) : null}
         </div>
     );
 }
@@ -7140,8 +7422,29 @@ export default function App() {
             return;
         }
 
+        if (
+            !isWalkInChannel(saleForm.channel)
+            && toNumber(saleForm.shipping_cost, 0) > 0
+            && !String(saleForm.shipping_purchase_receipt ?? '').trim()
+        ) {
+            flash('Courier receipt number is required when shipping cost is entered.', 'danger');
+            return;
+        }
+
         const originalSale = saleForm.id ? sales.find(s => s.id === saleForm.id) : null;
-        const salePreview = summarizeSalePreview(saleForm.items, products, saleForm.status, taxSettings.vatRate, originalSale?.items);
+        const salePreview = summarizeSalePreview(
+            saleForm.items,
+            products,
+            saleForm.status,
+            taxSettings.vatRate,
+            originalSale?.items,
+            {
+                channel: saleForm.channel,
+                shipping_fee: saleForm.shipping_fee,
+                shipping_cost: saleForm.shipping_cost,
+                shipping_fee_vat_exempt: saleForm.shipping_fee_vat_exempt
+            }
+        );
 
         // Prevent zero quantity
         const zeroQtyItem = salePreview.lines.find((line) => line.qty <= 0 && saleForm.status !== 'FAILED');
@@ -7158,16 +7461,20 @@ export default function App() {
         }
 
         try {
+            const walkIn = isWalkInChannel(saleForm.channel);
             const payload = {
                 ...saleForm,
                 channel: (saleForm.channel || '').trim(),
                 company_name: (saleForm.company_name || '').trim(),
+                shipping_fee: walkIn ? 0 : (saleForm.shipping_fee ? parseFloat(saleForm.shipping_fee) : 0),
+                shipping_cost: walkIn ? 0 : (saleForm.shipping_cost ? parseFloat(saleForm.shipping_cost) : 0),
+                shipping_purchase_receipt: walkIn ? '' : String(saleForm.shipping_purchase_receipt ?? '').trim(),
+                shipping_fee_vat_exempt: walkIn ? false : Boolean(saleForm.shipping_fee_vat_exempt),
                 items: validItems.map((item) => ({
                     product_id: item.product_id,
                     qty: item.qty,
                     unit_price: item.unit_price,
                     unit_cost: item.unit_cost,
-                    shipping_fee: item.shipping_fee ? parseFloat(item.shipping_fee) : 0,
                     gross_override: item.gross_override,
                     unit: (item.unit || '').trim(),
                     is_vat_exempt: item.is_vat_exempt
@@ -7744,14 +8051,26 @@ export default function App() {
                                     const fullSale = await window.agriLedger.sales.get(saleId);
                                     if (!fullSale) return;
                                     const payload = {
-                                        ...fullSale,
+                                        id: fullSale.id,
+                                        company_name: fullSale.companyName,
+                                        date: fullSale.date,
+                                        si_number: fullSale.siNumber,
+                                        customer_id: fullSale.customerId,
+                                        channel: fullSale.channel,
                                         status: newStatus,
+                                        po_number: fullSale.poNumber,
+                                        invoice_type: fullSale.invoiceType,
+                                        remarks: fullSale.remarks,
+                                        shipping_fee: fullSale.shippingFee ?? 0,
+                                        shipping_cost: fullSale.shippingCost ?? 0,
+                                        shipping_purchase_receipt: fullSale.shippingPurchaseReceipt ?? '',
+                                        shipping_fee_vat_exempt: Boolean(fullSale.isShippingFeeVatExempt),
                                         items: fullSale.items.map(i => ({
                                             product_id: i.productId,
                                             qty: i.qty,
                                             unit_price: i.unitPrice,
                                             unit: i.unit,
-                                            is_vat_exempt: i.vatExemptAmount > 0
+                                            is_vat_exempt: Boolean(i.isVatExempt)
                                         }))
                                     };
                                     await window.agriLedger.sales.save(payload);
