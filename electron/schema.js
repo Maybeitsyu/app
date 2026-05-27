@@ -94,6 +94,7 @@ export function initializeSchema(db) {
       shipping_fee REAL NOT NULL DEFAULT 0,
       shipping_cost REAL NOT NULL DEFAULT 0,
       shipping_fee_vat_exempt INTEGER NOT NULL DEFAULT 0,
+      shipping_cost_vat_exempt INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -406,6 +407,12 @@ export function initializeSchema(db) {
 
   try {
     db.exec(`ALTER TABLE sales ADD COLUMN shipping_fee_vat_exempt INTEGER NOT NULL DEFAULT 0`);
+  } catch (error) {
+    // Column might already exist, ignore
+  }
+
+  try {
+    db.exec(`ALTER TABLE sales ADD COLUMN shipping_cost_vat_exempt INTEGER NOT NULL DEFAULT 0`);
   } catch (error) {
     // Column might already exist, ignore
   }

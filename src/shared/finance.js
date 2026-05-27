@@ -120,14 +120,52 @@ export function formatQuantity(value) {
   }).format(toNumber(value));
 }
 
-export function toDateInputValue(value = new Date()) {
-  const date = value instanceof Date ? value : new Date(value);
+/** Parse YYYY-MM-DD (and other values) as local calendar dates — avoids UTC day shift. */
+export function parseLocalDate(value) {
+  if (!value && value !== 0) {
+    return null;
+  }
 
-  if (Number.isNaN(date.getTime())) {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+
+  const text = String(value).trim();
+  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+
+  if (isoMatch) {
+    const year = Number(isoMatch[1]);
+    const month = Number(isoMatch[2]);
+    const day = Number(isoMatch[3]);
+    const date = new Date(year, month - 1, day);
+
+    if (
+      date.getFullYear() === year
+      && date.getMonth() === month - 1
+      && date.getDate() === day
+    ) {
+      return date;
+    }
+
+    return null;
+  }
+
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+export function toDateInputValue(value = new Date()) {
+  const date = value instanceof Date ? value : parseLocalDate(value);
+
+  if (!date || Number.isNaN(date.getTime())) {
     return '';
   }
 
-  return date.toISOString().slice(0, 10);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
 }
 
 export function formatDateShort(value) {
@@ -135,9 +173,9 @@ export function formatDateShort(value) {
     return '-';
   }
 
-  const date = new Date(value);
+  const date = parseLocalDate(value);
 
-  if (Number.isNaN(date.getTime())) {
+  if (!date) {
     return String(value);
   }
 
@@ -201,6 +239,7 @@ export function calculateSaleLine({
   unitCost = 0,
   isVatExempt = false,
   isShippingFeeVatExempt = false,
+  isShippingCostVatExempt = false,
   status = 'PAID',
   vatRate = VAT_RATE,
   grossOverride = null
@@ -215,6 +254,9 @@ export function calculateSaleLine({
   const productCost = roundMoney(safeQty * safeUnitCost);
   const totalCost = roundMoney(productCost + safeShippingCost);
   const costVatSplit = isVatExempt || productCost <= 0 ? { netOfVat: productCost, vatAmount: 0 } : calculateVatFromGross(productCost, vatRate);
+  const shippingCostVatSplit = isShippingCostVatExempt || safeShippingCost <= 0
+    ? { netOfVat: safeShippingCost, vatAmount: 0 }
+    : calculateVatFromGross(safeShippingCost, vatRate);
   const shippingMargin = roundMoney(safeShippingFee - safeShippingCost);
 
   if (grossOverride !== null || grossAmount <= 0) {
@@ -235,7 +277,7 @@ export function calculateSaleLine({
       vatExemptAmount: lineExempt ? grossAmount : 0,
       costing: safeUnitCost,
       totalCost,
-      profit: roundMoney(grossAmount - vatSplit.vatAmount - costVatSplit.netOfVat - safeShippingCost)
+      profit: roundMoney(grossAmount - vatSplit.vatAmount - costVatSplit.netOfVat - shippingCostVatSplit.netOfVat)
     };
   }
 
@@ -283,7 +325,7 @@ export function calculateSaleLine({
     vatExemptAmount,
     costing: safeUnitCost,
     totalCost,
-    profit: roundMoney(grossAmount - outputVat - costVatSplit.netOfVat - safeShippingCost)
+    profit: roundMoney(grossAmount - outputVat - costVatSplit.netOfVat - shippingCostVatSplit.netOfVat)
   };
 }
 

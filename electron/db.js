@@ -7,13 +7,13 @@ import { initializeSchema, requiredTables } from './schema.js';
 import {
   calculatePurchaseLine,
   calculateSaleLine,
+  calculateVatFromGross,
   calculateAverageCost,
   companyNames,
   defaultTaxSettings,
   deliveryExpenseCategory,
   expenseCategories,
   formatDateShort,
-  isWalkInChannel,
   productCategories,
   roundMoney,
   saleStatuses,
@@ -262,6 +262,7 @@ function openDatabase() {
   db.pragma('busy_timeout = 5000');
   initializeSchema(db);
   validateSchema(db);
+  migrateAllLegacyProductStock(db);
 
   return db;
 }
@@ -284,6 +285,8 @@ function serializeProduct(row) {
     description: row.description,
     category: row.category,
     unit: row.unit,
+    catalogCost: roundMoney(row.cost),
+    catalogSrp: roundMoney(row.srp),
     cost: roundMoney(row.current_cost_basis ?? row.cost),
     oldestCostBasis: roundMoney(row.oldest_cost_basis ?? row.cost),
     averageCost: calculateAverageCost(row.current_cost_basis ?? row.cost, row.labor_cost, row.packaging_cost),
@@ -496,6 +499,7 @@ function serializeSaleSummary(row) {
     shippingFee: roundMoney(row.shipping_fee),
     shippingCost: roundMoney(row.shipping_cost),
     isShippingFeeVatExempt: Boolean(row.shipping_fee_vat_exempt),
+    isShippingCostVatExempt: Boolean(row.shipping_cost_vat_exempt),
     items: JSON.parse(row.items_json || '[]'),
     itemCount: Number(row.item_count ?? 0),
     createdAt: row.created_at,
@@ -512,6 +516,49 @@ function getProductStock(db, productId) {
   ).get(cleanedProductId, cleanedProductId);
 
   return roundMoney(row.stock);
+}
+
+/**
+ * Excel import and older records may store quantity only on products.stock_qty.
+ * Active inventory is tracked in batches — move legacy qty into a batch before stock_qty is cleared.
+ */
+function migrateLegacyProductStockToBatches(db, productId, { unitCost = 0, srp = 0, unit = 'pc' } = {}) {
+  const pid = cleanString(productId);
+  if (!pid) {
+    return 0;
+  }
+
+  const row = db.prepare('SELECT stock_qty FROM products WHERE id = ?').get(pid);
+  const legacyQty = row ? roundMoney(row.stock_qty) : 0;
+  if (legacyQty <= 0) {
+    return 0;
+  }
+
+  createBatch(db, {
+    productId: pid,
+    batchNumber: `LEGACY-${Date.now()}`,
+    date: todayIsoDate(),
+    unitCost: roundMoney(unitCost),
+    srp: roundMoney(srp),
+    remainingQty: legacyQty,
+    unit: cleanString(unit) || 'pc'
+  });
+
+  return legacyQty;
+}
+
+function migrateAllLegacyProductStock(db) {
+  const rows = db
+    .prepare('SELECT id, stock_qty, cost, srp, unit FROM products WHERE stock_qty > 0')
+    .all();
+
+  for (const row of rows) {
+    migrateLegacyProductStockToBatches(db, row.id, {
+      unitCost: row.cost,
+      srp: row.srp,
+      unit: row.unit
+    });
+  }
 }
 
 function createBatch(db, payload = {}) {
@@ -989,15 +1036,19 @@ function upsertProduct(db, payload = {}) {
     );
   }
 
-  // Calculate current total stock (batches + legacy stock_qty)
-  const currentBatchSum = db.prepare('SELECT COALESCE(SUM(remaining_qty), 0) AS sum FROM batches WHERE product_id = ? AND remaining_qty > 0').get(id)?.sum || 0;
   const productRecord = db.prepare('SELECT stock_qty FROM products WHERE id = ?').get(id);
-  const currentLegacyStock = productRecord ? roundMoney(productRecord.stock_qty) : 0;
-  const currentTotalStock = roundMoney(currentBatchSum + currentLegacyStock);
-  const targetTotalStock = roundMoney(payload.stock_qty ?? payload.stockQty);
-
-  // Check if this is a new product (not yet in DB)
   const isNewProduct = !productRecord;
+
+  // Excel import writes stock only to products.stock_qty; migrate before we zero that column.
+  if (!isNewProduct) {
+    migrateLegacyProductStockToBatches(db, id, { unitCost: cost, srp, unit });
+  }
+
+  const currentBatchSum = db.prepare(
+    'SELECT COALESCE(SUM(remaining_qty), 0) AS sum FROM batches WHERE product_id = ? AND remaining_qty > 0'
+  ).get(id)?.sum || 0;
+  const currentTotalStock = roundMoney(currentBatchSum);
+  const targetTotalStock = roundMoney(payload.stock_qty ?? payload.stockQty);
 
   let result;
   try {
@@ -1111,6 +1162,11 @@ function upsertProduct(db, payload = {}) {
         console.error('Adjustment consumeStock failed:', e);
       }
     }
+
+    // Keep on-hand batch pricing aligned with catalog edits (Excel imports create batches with frozen costs/SRP).
+    db.prepare(
+      'UPDATE batches SET unit_cost = ?, srp = ?, updated_at = ? WHERE product_id = ? AND remaining_qty > 0'
+    ).run(cost, srp, nowIso(), id);
   }
 
   return getProductById(db, id);
@@ -1243,19 +1299,29 @@ function splitProduct(db, productId, quantity = 1, laborCost = 0, packagingCost 
     let kgProduct = db.prepare('SELECT * FROM products WHERE code = ? OR name = ?').get(kgProductCode, kgProductName);
 
     const addedStock = product.sackWeightKg * qty;
-    const baseCostPerKg = product.sackWeightKg > 0 ? product.cost / product.sackWeightKg : product.cost;
-    const newAverageCost = roundMoney(baseCostPerKg + lCost + pCost);
+    const sackBaseCost = roundMoney(product.catalogCost ?? product.cost);
+    const baseCostPerKg = product.sackWeightKg > 0 ? roundMoney(sackBaseCost / product.sackWeightKg) : sackBaseCost;
+    const splitFullCost = calculateAverageCost(baseCostPerKg, lCost, pCost);
 
     if (kgProduct) {
       // Calculate weighted average cost
       const existing = getProductById(db, kgProduct.id);
       const totalQty = (existing.stockQty || 0) + addedStock;
-      const weightedAvgCost = (((existing.stockQty || 0) * (existing.averageCost || existing.cost)) + (addedStock * newAverageCost)) / (totalQty || 1);
+      const existingFullCost = roundMoney(
+        existing.averageCost
+        ?? calculateAverageCost(
+          existing.cost ?? existing.catalogCost,
+          existing.laborCost,
+          existing.packagingCost
+        )
+      );
+      const weightedAvgCost = (((existing.stockQty || 0) * existingFullCost) + (addedStock * splitFullCost)) / (totalQty || 1);
 
       // Update existing kg product costs and SRP
       db.prepare(
         `
           UPDATE products SET
+            cost = ?,
             labor_cost = ?,
             packaging_cost = ?,
             average_cost = ?,
@@ -1263,14 +1329,14 @@ function splitProduct(db, productId, quantity = 1, laborCost = 0, packagingCost 
             updated_at = ?
           WHERE id = ?
         `
-      ).run(lCost, pCost, roundMoney(weightedAvgCost), retailSrp, stamp, kgProduct.id);
+      ).run(baseCostPerKg, lCost, pCost, roundMoney(weightedAvgCost), retailSrp, stamp, kgProduct.id);
 
       // Create a batch for the added retail stock
       createBatch(db, {
         productId: kgProduct.id,
         batchNumber: `SPLIT-${product.code}-${Date.now()}`,
         date: todayIsoDate(),
-        unitCost: newAverageCost,
+        unitCost: splitFullCost,
         srp: retailSrp,
         remainingQty: addedStock,
         unit: 'kg'
@@ -1298,7 +1364,7 @@ function splitProduct(db, productId, quantity = 1, laborCost = 0, packagingCost 
         category: product.category,
         unit: 'kg',
         cost: baseCostPerKg,
-        average_cost: newAverageCost,
+        average_cost: splitFullCost,
         srp: retailSrp,
         sack_weight_kg: 0,
         price_per_kg: 0,
@@ -1316,7 +1382,7 @@ function splitProduct(db, productId, quantity = 1, laborCost = 0, packagingCost 
         productId: newId,
         batchNumber: `SPLIT-INIT-${product.code}`,
         date: todayIsoDate(),
-        unitCost: newAverageCost,
+        unitCost: baseCostPerKg,
         srp: retailSrp,
         remainingQty: addedStock,
         unit: 'kg'
@@ -1341,8 +1407,8 @@ function splitProduct(db, productId, quantity = 1, laborCost = 0, packagingCost 
 function getProductById(db, id) {
   const row = db.prepare(`
     SELECT p.*,
-      (SELECT b.srp FROM batches b WHERE b.product_id = p.id AND b.remaining_qty > 0 ORDER BY b.date ASC, b.created_at ASC LIMIT 1) AS current_srp,
-      (SELECT b.unit_cost FROM batches b WHERE b.product_id = p.id AND b.remaining_qty > 0 ORDER BY b.date ASC, b.created_at ASC LIMIT 1) AS current_cost_basis,
+      (SELECT b.srp FROM batches b WHERE b.product_id = p.id AND b.remaining_qty > 0 ORDER BY b.date DESC, b.created_at DESC LIMIT 1) AS current_srp,
+      (SELECT b.unit_cost FROM batches b WHERE b.product_id = p.id AND b.remaining_qty > 0 ORDER BY b.date DESC, b.created_at DESC LIMIT 1) AS current_cost_basis,
       (SELECT b.remaining_qty FROM batches b WHERE b.product_id = p.id AND b.remaining_qty > 0 ORDER BY b.date ASC, b.created_at ASC LIMIT 1) AS current_batch_stock,
       (SELECT json_group_array(json_object('remaining_qty', b.remaining_qty, 'srp', b.srp, 'unit_cost', b.unit_cost)) FROM batches b WHERE b.product_id = p.id AND b.remaining_qty > 0 ORDER BY b.date ASC, b.created_at ASC) AS active_batches
     FROM products p WHERE p.id = ?
@@ -2107,6 +2173,7 @@ function syncSaleShippingPurchase(db, {
   siNumber,
   purchaseReceiptNumber,
   totalShippingCost,
+  isShippingCostVatExempt = false,
   status
 }) {
   const purchaseId = getSaleShippingPurchaseId(saleId);
@@ -2136,7 +2203,7 @@ function syncSaleShippingPurchase(db, {
     receipt_number: purchaseReceipt,
     address: '',
     gross_amount: totalShippingCost,
-    is_vat_exempt: true,
+    is_vat_exempt: Boolean(isShippingCostVatExempt),
     expense_category: deliveryExpenseCategory,
     remarks: `Delivery cost for sale #${saleReceiptLabel}${siLabel}`.trim()
   });
@@ -2154,11 +2221,14 @@ function createSale(db, payload = {}) {
   const poNumber = cleanString(payload.po_number ?? payload.poNumber);
   const invoiceType = cleanString(payload.invoice_type ?? payload.invoiceType) || 'SI';
   const remarks = cleanString(payload.remarks);
-  const applyShipping = !isWalkInChannel(channel);
-  const saleShippingFee = applyShipping ? roundMoney(payload.shipping_fee ?? payload.shippingFee ?? 0) : 0;
-  const saleShippingCost = applyShipping ? roundMoney(payload.shipping_cost ?? payload.shippingCost ?? 0) : 0;
-  const saleShippingFeeVatExempt = applyShipping && asBoolean(
+  const saleShippingFee = roundMoney(payload.shipping_fee ?? payload.shippingFee ?? 0);
+  const saleShippingCost = roundMoney(payload.shipping_cost ?? payload.shippingCost ?? 0);
+  const saleShippingFeeVatExempt = asBoolean(
     payload.shipping_fee_vat_exempt ?? payload.isShippingFeeVatExempt,
+    false
+  );
+  const saleShippingCostVatExempt = asBoolean(
+    payload.shipping_cost_vat_exempt ?? payload.isShippingCostVatExempt,
     false
   );
   const rawItems = Array.isArray(payload.items) ? payload.items : [];
@@ -2201,6 +2271,7 @@ function createSale(db, payload = {}) {
           shipping_fee = ?,
           shipping_cost = ?,
           shipping_fee_vat_exempt = ?,
+          shipping_cost_vat_exempt = ?,
           updated_at = ?
       WHERE id = ?
     `
@@ -2349,12 +2420,17 @@ function createSale(db, payload = {}) {
             }
           }
 
+          const requestedUnit = cleanString(rawItem.unit) || product.unit || 'pc';
+          const resolvedUnitCost = hasManualCost
+            ? roundMoney(manualUnitCost)
+            : resolveSaleUnitCostFromBatchBasis(weightedUnitCost, product, requestedUnit);
+
           finalLine = calculateSaleLine({
             qty,
             unitPrice: finalUnitPrice,
             shippingFee: 0,
             shippingCost: 0,
-            unitCost: hasManualCost ? roundMoney(manualUnitCost) : weightedUnitCost,
+            unitCost: resolvedUnitCost,
             isVatExempt,
             isShippingFeeVatExempt: false,
             status,
@@ -2404,7 +2480,7 @@ function createSale(db, payload = {}) {
       profit += finalLine.profit;
     }
 
-    if (applyShipping && (saleShippingFee > 0 || saleShippingCost > 0)) {
+    if (saleShippingFee > 0 || saleShippingCost > 0) {
       const shippingLine = calculateSaleLine({
         qty: 0,
         unitPrice: 0,
@@ -2413,6 +2489,7 @@ function createSale(db, payload = {}) {
         unitCost: 0,
         isVatExempt: false,
         isShippingFeeVatExempt: saleShippingFeeVatExempt,
+        isShippingCostVatExempt: saleShippingCostVatExempt,
         status,
         vatRate
       });
@@ -2433,6 +2510,7 @@ function createSale(db, payload = {}) {
       saleShippingFee,
       saleShippingCost,
       saleShippingFeeVatExempt ? 1 : 0,
+      saleShippingCostVatExempt ? 1 : 0,
       nowIso(),
       saleId
     );
@@ -2446,6 +2524,7 @@ function createSale(db, payload = {}) {
       siNumber,
       purchaseReceiptNumber: shippingPurchaseReceipt,
       totalShippingCost: roundMoney(totalShippingCost),
+      isShippingCostVatExempt: saleShippingCostVatExempt,
       status
     };
   });
@@ -2515,6 +2594,20 @@ function normalizeUnit(value) {
 
 function isKilogramUnit(value) {
   return ['kg', 'klg', 'kilo', 'kilogram', 'kilograms'].includes(normalizeUnit(value));
+}
+
+function resolveSaleUnitCostFromBatchBasis(batchUnitCost, product, saleUnit) {
+  const laborCost = roundMoney(product.labor_cost);
+  const packagingCost = roundMoney(product.packaging_cost);
+  const isKgSale = isKilogramUnit(saleUnit);
+  const sackWeightKg = roundMoney(product.sack_weight_kg);
+  let base = roundMoney(batchUnitCost);
+
+  if (isKgSale && sackWeightKg > 0) {
+    base = roundMoney(base / sackWeightKg);
+  }
+
+  return calculateAverageCost(base, laborCost, packagingCost);
 }
 
 function resolveSalePricing(product, rawItem, status) {
@@ -2671,11 +2764,269 @@ async function exportFinancialStatementToExcel(db, filePath, filters = {}) {
   return true;
 }
 
-async function exportFullReportToExcel(db, filePath) {
+const SALES_EXPORT_COLUMNS = [
+  { header: 'DATE', key: 'date', width: 15 },
+  { header: 'RECEIPT #', key: 'receipt', width: 15 },
+  { header: 'TAX IDENTIFICATION NUMBER', key: 'tin', width: 20 },
+  { header: 'SI NO.', key: 'si', width: 15 },
+  { header: 'CUSTOMER', key: 'customer', width: 20 },
+  { header: 'ADDRESS', key: 'address', width: 30 },
+  { header: 'PRODUCT', key: 'product', width: 20 },
+  { header: 'QTY', key: 'qty', width: 10 },
+  { header: 'UNIT', key: 'unit', width: 10 },
+  { header: 'UNIT PRICE', key: 'unit_price', width: 15 },
+  { header: 'GROSS AMOUNT', key: 'gross', width: 15 },
+  { header: 'NET OF VAT', key: 'net_of_vat', width: 15 },
+  { header: 'OUTPUT VAT', key: 'output_vat', width: 15 },
+  { header: 'VAT EXEMPT SALES ', key: 'vat_exempt', width: 20 },
+  { header: 'COSTING', key: 'costing', width: 15 },
+  { header: 'TOTAL COST', key: 'total_cost', width: 15 },
+  { header: 'PROFIT', key: 'profit', width: 15 },
+  { header: 'STATUS', key: 'status', width: 15 },
+  { header: 'REMARKS', key: 'remarks', width: 20 },
+  { header: 'PO #', key: 'po', width: 15 },
+  { header: 'CONTACT #', key: 'contact', width: 15 },
+  { header: 'INVOICE', key: 'invoice', width: 15 },
+  { header: 'USERNAME', key: 'username', width: 15 }
+];
+
+const SALES_EXPORT_QUERY = `
+  SELECT
+    s.id AS sale_id,
+    s.date,
+    s.receipt_number,
+    s.shipping_fee,
+    s.shipping_cost,
+    s.shipping_fee_vat_exempt,
+    s.channel,
+    c.tin,
+    s.si_number,
+    c.name AS customer_name,
+    c.address,
+    p.name AS product_name,
+    si.qty,
+    si.unit,
+    si.unit_price,
+    si.gross_amount,
+    COALESCE(NULLIF(si.net_of_vat, 0), si.input_vat) AS net_of_vat,
+    si.output_vat,
+    si.vat_exempt_amount,
+    si.costing,
+    si.total_cost,
+    si.profit,
+    s.status,
+    s.remarks,
+    s.po_number,
+    c.contact_number,
+    c.customer_username,
+    p.photo_path
+  FROM sales s
+  JOIN sale_items si ON s.id = si.sale_id
+  LEFT JOIN customers c ON s.customer_id = c.id
+  LEFT JOIN products p ON si.product_id = p.id
+  ORDER BY s.receipt_number DESC, s.date DESC, s.created_at DESC, si.created_at ASC
+`;
+
+function formatSalesExportReceipt(receiptNumber) {
+  return receiptNumber ? String(receiptNumber).padStart(4, '0') : '-';
+}
+
+function buildShippingExportRow(saleHeader, vatRate) {
+  const shippingFee = roundMoney(saleHeader.shipping_fee);
+  const shippingCost = roundMoney(saleHeader.shipping_cost);
+  const isVatExempt = Boolean(saleHeader.shipping_fee_vat_exempt);
+  const customerLabel = cleanString(saleHeader.customer_name) || 'Customer';
+
+  let netOfVat = 0;
+  let outputVat = 0;
+  let vatExempt = 0;
+
+  if (isVatExempt || shippingFee <= 0) {
+    vatExempt = shippingFee;
+  } else {
+    const split = calculateVatFromGross(shippingFee, vatRate);
+    netOfVat = split.netOfVat;
+    outputVat = split.vatAmount;
+  }
+
+  return {
+    sale_id: saleHeader.sale_id,
+    photo_path: null,
+    date: saleHeader.date,
+    receipt: formatSalesExportReceipt(saleHeader.receipt_number),
+    tin: saleHeader.tin,
+    si: saleHeader.si_number,
+    customer: customerLabel,
+    address: saleHeader.address,
+    product: 'shipping',
+    qty: 1,
+    unit: 'LOT',
+    unit_price: shippingFee,
+    gross: shippingFee,
+    net_of_vat: netOfVat,
+    output_vat: outputVat,
+    vat_exempt: vatExempt,
+    costing: shippingCost,
+    total_cost: shippingCost,
+    profit: roundMoney(shippingFee - shippingCost),
+    status: saleHeader.status,
+    remarks: saleHeader.remarks,
+    po: saleHeader.po_number,
+    contact: saleHeader.contact_number,
+    invoice: saleHeader.channel,
+    username: saleHeader.customer_username
+  };
+}
+
+function mapProductRowToExport(row) {
+  const customerLabel = cleanString(row.customer_name) || 'Customer';
+
+  return {
+    sale_id: row.sale_id,
+    photo_path: row.photo_path ?? null,
+    date: row.date,
+    receipt: formatSalesExportReceipt(row.receipt_number),
+    tin: row.tin,
+    si: row.si_number,
+    customer: customerLabel,
+    address: row.address,
+    product: row.product_name,
+    qty: row.qty,
+    unit: row.unit,
+    unit_price: row.unit_price,
+    gross: row.gross_amount,
+    net_of_vat: row.net_of_vat,
+    output_vat: row.output_vat,
+    vat_exempt: row.vat_exempt_amount,
+    costing: row.costing,
+    total_cost: row.total_cost,
+    profit: row.profit,
+    status: row.status,
+    remarks: row.remarks,
+    po: row.po_number,
+    contact: row.contact_number,
+    invoice: row.channel,
+    username: row.customer_username
+  };
+}
+
+function buildSalesExportRows(rawRows, vatRate) {
+  const saleOrder = [];
+  const saleGroups = new Map();
+
+  for (const row of rawRows) {
+    if (!saleGroups.has(row.sale_id)) {
+      saleOrder.push(row.sale_id);
+      saleGroups.set(row.sale_id, { header: row, items: [] });
+    }
+    saleGroups.get(row.sale_id).items.push(row);
+  }
+
+  const exportRows = [];
+
+  for (const saleId of saleOrder) {
+    const { header, items } = saleGroups.get(saleId);
+    const shippingFee = roundMoney(header.shipping_fee);
+
+    for (const item of items) {
+      exportRows.push(mapProductRowToExport(item));
+    }
+
+    if (shippingFee > 0) {
+      exportRows.push(buildShippingExportRow(header, vatRate));
+    }
+  }
+
+  return exportRows;
+}
+
+function mergeDateAndCustomerCells(sheet, startRow, endRow) {
+  if (endRow <= startRow) {
+    return;
+  }
+
+  sheet.mergeCells(startRow, 1, endRow, 1);
+  sheet.mergeCells(startRow, 5, endRow, 5);
+
+  const mergedAlignment = { vertical: 'middle', horizontal: 'center' };
+  sheet.getCell(startRow, 1).alignment = mergedAlignment;
+  sheet.getCell(startRow, 5).alignment = mergedAlignment;
+}
+
+function writeSalesExportRowsToSheet(sheet, rawRows, vatRate, { includePhotos = false, workbook = null } = {}) {
+  const exportRows = buildSalesExportRows(rawRows, vatRate);
+  const headerRowCount = 1;
+  let currentSaleId = null;
+  let mergeStartRow = null;
+
+  for (const exportRow of exportRows) {
+    const excelRow = sheet.addRow({
+      date: exportRow.date,
+      receipt: exportRow.receipt,
+      tin: exportRow.tin,
+      si: exportRow.si,
+      customer: exportRow.customer,
+      address: exportRow.address,
+      product: exportRow.product,
+      qty: exportRow.qty,
+      unit: exportRow.unit,
+      unit_price: exportRow.unit_price,
+      gross: exportRow.gross,
+      net_of_vat: exportRow.net_of_vat,
+      output_vat: exportRow.output_vat,
+      vat_exempt: exportRow.vat_exempt,
+      costing: exportRow.costing,
+      total_cost: exportRow.total_cost,
+      profit: exportRow.profit,
+      status: exportRow.status,
+      remarks: exportRow.remarks,
+      po: exportRow.po,
+      contact: exportRow.contact,
+      invoice: exportRow.invoice,
+      username: exportRow.username
+    });
+
+    const rowNumber = excelRow.number;
+
+    if (exportRow.sale_id !== currentSaleId) {
+      if (currentSaleId !== null && mergeStartRow !== null && rowNumber - 1 > mergeStartRow) {
+        mergeDateAndCustomerCells(sheet, mergeStartRow, rowNumber - 1);
+      }
+      currentSaleId = exportRow.sale_id;
+      mergeStartRow = rowNumber;
+    }
+
+    if (includePhotos && exportRow.photo_path && workbook && fs.existsSync(exportRow.photo_path)) {
+      try {
+        const imageId = workbook.addImage({
+          filename: exportRow.photo_path,
+          extension: path.extname(exportRow.photo_path).slice(1).toLowerCase() || 'png'
+        });
+        sheet.addImage(imageId, {
+          tl: { col: 23, row: rowNumber - 1 },
+          ext: { width: 50, height: 50 }
+        });
+        excelRow.height = 40;
+      } catch (e) {
+        // Skip broken image paths during export.
+      }
+    }
+  }
+
+  const lastRowNumber = sheet.lastRow?.number ?? headerRowCount;
+  if (currentSaleId !== null && mergeStartRow !== null && lastRowNumber > mergeStartRow) {
+    mergeDateAndCustomerCells(sheet, mergeStartRow, lastRowNumber);
+  }
+
+  return exportRows;
+}
+
+async function exportFullReportToExcel(db, filePath, filters = {}) {
+  const { fromDate = '', toDate = '' } = filters;
   const workbook = new ExcelJS.Workbook();
 
   // 0. Add Financial Statement Sheet
-  const fsData = getFinancialStatement(db);
+  const fsData = getFinancialStatement(db, filters);
   const fsSheet = workbook.addWorksheet('FINANCIAL STATEMENT');
 
   const boldFont = { bold: true, name: 'Arial', size: 10 };
@@ -2686,8 +3037,12 @@ async function exportFullReportToExcel(db, filePath) {
   fsSheet.getColumn(1).width = 45;
   fsSheet.getColumn(2).width = 25;
 
+  const periodLabel = fromDate && toDate
+    ? `${fromDate} to ${toDate}`
+    : `As of ${new Date().toLocaleDateString()}`;
+
   fsSheet.addRow(['FINANCIAL STATEMENT']);
-  fsSheet.addRow([`As of ${new Date().toLocaleDateString()}`]);
+  fsSheet.addRow([periodLabel]);
   fsSheet.addRow([]);
   fsSheet.getRow(1).font = titleFont;
   fsSheet.getRow(2).font = boldFont;
@@ -2723,40 +3078,10 @@ async function exportFullReportToExcel(db, filePath) {
   addFsLine('Net Income Before Tax', netIncomeBeforeTax, true, true);
   addFsLine('Net Income', roundMoney(netIncomeBeforeTax), true, true);
   // 1. Query Sales Data
-  const query = `
-    SELECT 
-      s.date,
-      s.receipt_number,
-      c.tin,
-      s.si_number,
-      c.name as customer_name,
-      c.address,
-      p.name as product_name,
-      si.qty,
-      si.unit,
-      si.unit_price,
-      si.gross_amount,
-      COALESCE(NULLIF(si.net_of_vat, 0), si.input_vat) AS net_of_vat,
-      si.output_vat,
-      si.vat_exempt_amount,
-      si.costing,
-      si.total_cost,
-      si.profit,
-      s.status,
-      s.remarks,
-      s.po_number,
-      c.contact_number,
-      s.channel,
-      c.customer_username,
-      p.photo_path
-    FROM sales s
-    JOIN sale_items si ON s.id = si.sale_id
-    LEFT JOIN customers c ON s.customer_id = c.id
-    LEFT JOIN products p ON si.product_id = p.id
-    ORDER BY s.receipt_number DESC, s.date DESC, s.created_at DESC
-  `;
-
-  const allRows = db.prepare(query).all();
+  const salesDateClause = fromDate && toDate ? ' WHERE s.date >= ? AND s.date <= ?' : '';
+  const salesQuery = SALES_EXPORT_QUERY.replace('  ORDER BY', `${salesDateClause}\n  ORDER BY`);
+  const salesParams = fromDate && toDate ? [fromDate, toDate] : [];
+  const allRows = db.prepare(salesQuery).all(...salesParams);
 
   // 1. Group Sales by month
   const salesGroups = {};
@@ -2768,12 +3093,14 @@ async function exportFullReportToExcel(db, filePath) {
   }
 
   // 2. Query and Group Purchases by month
+  const purchaseDateClause = fromDate && toDate ? ' WHERE date >= ? AND date <= ?' : '';
   const purchaseQuery = `
     SELECT date, company_name, supplier_tin, supplier_name, receipt_number, address, expense_category, gross_amount, net_of_vat, input_vat, remarks
-    FROM purchases
+    FROM purchases${purchaseDateClause}
     ORDER BY date DESC
   `;
-  const allPurchases = db.prepare(purchaseQuery).all();
+  const purchaseParams = fromDate && toDate ? [fromDate, toDate] : [];
+  const allPurchases = db.prepare(purchaseQuery).all(...purchaseParams);
   const purchaseGroups = {};
   for (const row of allPurchases) {
     const date = new Date(row.date);
@@ -2784,30 +3111,7 @@ async function exportFullReportToExcel(db, filePath) {
 
   // 3. Define Columns
   const salesColumnDef = [
-    { header: 'DATE', key: 'date', width: 15 },
-    { header: 'RECEIPT #', key: 'receipt', width: 15 },
-
-    { header: 'TAX IDENTIFICATION NUMBER', key: 'tin', width: 20 },
-    { header: 'SI NO.', key: 'si', width: 15 },
-    { header: 'CUSTOMER', key: 'customer', width: 20 },
-    { header: 'ADDRESS', key: 'address', width: 30 },
-    { header: 'PRODUCT', key: 'product', width: 20 },
-    { header: 'QTY', key: 'qty', width: 10 },
-    { header: 'UNIT', key: 'unit', width: 10 },
-    { header: 'UNIT PRICE', key: 'unit_price', width: 15 },
-    { header: 'GROSS AMOUNT', key: 'gross', width: 15 },
-    { header: 'NET OF VAT', key: 'net_of_vat', width: 15 },
-    { header: 'OUTPUT VAT', key: 'output_vat', width: 15 },
-    { header: 'VAT EXEMPT SALES ', key: 'vat_exempt', width: 20 },
-    { header: 'COSTING', key: 'costing', width: 15 },
-    { header: 'TOTAL COST', key: 'total_cost', width: 15 },
-    { header: 'PROFIT', key: 'profit', width: 15 },
-    { header: 'STATUS', key: 'status', width: 15 },
-    { header: 'REMARKS', key: 'remarks', width: 20 },
-    { header: 'PO #', key: 'po', width: 15 },
-    { header: 'CONTACT #', key: 'contact', width: 15 },
-    { header: 'INVOICE', key: 'invoice', width: 15 },
-    { header: 'USERNAME', key: 'username', width: 15 },
+    ...SALES_EXPORT_COLUMNS,
     { header: 'PICTURE', key: 'picture', width: 20 }
   ];
 
@@ -2843,51 +3147,16 @@ async function exportFullReportToExcel(db, filePath) {
       let totalCost = 0;
       let totalProfit = 0;
 
-      for (let i = 0; i < salesRows.length; i++) {
-        const row = salesRows[i];
-        totalSales += (row.net_of_vat + row.vat_exempt_amount);
+      const { vatRate } = getTaxSettings(db);
+      const writtenRows = writeSalesExportRowsToSheet(salesSheet, salesRows, vatRate, {
+        includePhotos: true,
+        workbook
+      });
+
+      for (const row of writtenRows) {
+        totalSales += (row.net_of_vat + row.vat_exempt);
         totalCost += row.total_cost;
         totalProfit += row.profit;
-
-        const excelRow = salesSheet.addRow({
-          date: row.date,
-          receipt: row.receipt_number ? String(row.receipt_number).padStart(4, '0') : '-',
-          tin: row.tin,
-          si: row.si_number,
-          customer: row.customer_name,
-          address: row.address,
-          product: row.product_name,
-          qty: row.qty,
-          unit: row.unit,
-          unit_price: row.unit_price,
-          gross: row.gross_amount,
-          net_of_vat: row.net_of_vat,
-          output_vat: row.output_vat,
-          vat_exempt: row.vat_exempt_amount,
-          costing: row.costing,
-          total_cost: row.total_cost,
-          profit: row.profit,
-          status: row.status,
-          remarks: row.remarks,
-          po: row.po_number,
-          contact: row.contact_number,
-          invoice: row.channel,
-          username: row.customer_username
-        });
-
-        if (row.photo_path && fs.existsSync(row.photo_path)) {
-          try {
-            const imageId = workbook.addImage({
-              filename: row.photo_path,
-              extension: path.extname(row.photo_path).slice(1).toLowerCase() || 'png'
-            });
-            salesSheet.addImage(imageId, {
-              tl: { col: 23, row: i + 1 },
-              ext: { width: 50, height: 50 }
-            });
-            excelRow.height = 40;
-          } catch (e) { }
-        }
       }
 
       // Add Summary Block to Sales Sheet
@@ -2896,7 +3165,7 @@ async function exportFullReportToExcel(db, filePath) {
       const matSupp = pRows.filter(r => r.expense_category === 'Materials & Supplies').reduce((sum, r) => sum + r.gross_amount, 0);
       const otherExp = pRows.filter(r => r.expense_category !== 'Materials & Supplies').reduce((sum, r) => sum + r.gross_amount, 0);
 
-      const summaryStartRow = salesRows.length + 3;
+      const summaryStartRow = writtenRows.length + 3;
       salesSheet.getCell(`A${summaryStartRow}`).value = 'SALES';
       salesSheet.getCell(`B${summaryStartRow}`).value = totalSales;
       salesSheet.getCell(`A${summaryStartRow + 1}`).value = 'TOTAL COST';
@@ -3026,78 +3295,11 @@ async function exportSalesToExcel(db, filePath) {
   const workbook = new ExcelJS.Workbook();
   const salesSheet = workbook.addWorksheet('SALES');
 
-  const salesColumnDef = [
-    { header: 'DATE', key: 'date', width: 15 },
-    { header: 'RECEIPT #', key: 'receipt', width: 15 },
+  salesSheet.columns = SALES_EXPORT_COLUMNS;
 
-    { header: 'TAX IDENTIFICATION NUMBER', key: 'tin', width: 20 },
-    { header: 'SI NO.', key: 'si', width: 15 },
-    { header: 'CUSTOMER', key: 'customer', width: 20 },
-    { header: 'ADDRESS', key: 'address', width: 30 },
-    { header: 'PRODUCT', key: 'product', width: 20 },
-    { header: 'QTY', key: 'qty', width: 10 },
-    { header: 'UNIT', key: 'unit', width: 10 },
-    { header: 'UNIT PRICE', key: 'unit_price', width: 15 },
-    { header: 'GROSS AMOUNT', key: 'gross', width: 15 },
-    { header: 'NET OF VAT', key: 'net_of_vat', width: 15 },
-    { header: 'OUTPUT VAT', key: 'output_vat', width: 15 },
-    { header: 'VAT EXEMPT SALES ', key: 'vat_exempt', width: 20 },
-    { header: 'COSTING', key: 'costing', width: 15 },
-    { header: 'TOTAL COST', key: 'total_cost', width: 15 },
-    { header: 'PROFIT', key: 'profit', width: 15 },
-    { header: 'STATUS', key: 'status', width: 15 },
-    { header: 'REMARKS', key: 'remarks', width: 20 },
-    { header: 'PO #', key: 'po', width: 15 },
-    { header: 'CONTACT #', key: 'contact', width: 15 },
-    { header: 'INVOICE', key: 'invoice', width: 15 },
-    { header: 'USERNAME', key: 'username', width: 15 }
-  ];
-
-  salesSheet.columns = salesColumnDef;
-
-  const query = `
-    SELECT 
-      s.date, s.receipt_number, c.tin, s.si_number, c.name as customer_name, c.address, p.name as product_name,
-      si.qty, si.unit, si.unit_price, si.gross_amount,
-      COALESCE(NULLIF(si.net_of_vat, 0), si.input_vat) AS net_of_vat,
-      si.output_vat,
-      si.vat_exempt_amount, si.costing, si.total_cost, si.profit, s.status, s.remarks, s.po_number,
-      c.contact_number, s.channel, c.customer_username
-    FROM sales s
-    JOIN sale_items si ON s.id = si.sale_id
-    LEFT JOIN customers c ON s.customer_id = c.id
-    LEFT JOIN products p ON si.product_id = p.id
-    ORDER BY s.receipt_number DESC, s.date DESC, s.created_at DESC
-  `;
-
-  const rows = db.prepare(query).all();
-  rows.forEach(row => {
-    salesSheet.addRow({
-      date: row.date,
-      receipt: row.receipt_number ? String(row.receipt_number).padStart(4, '0') : '-',
-      tin: row.tin,
-      si: row.si_number,
-      customer: row.customer_name,
-      address: row.address,
-      product: row.product_name,
-      qty: row.qty,
-      unit: row.unit,
-      unit_price: row.unit_price,
-      gross: row.gross_amount,
-      net_of_vat: row.net_of_vat,
-      output_vat: row.output_vat,
-      vat_exempt: row.vat_exempt_amount,
-      costing: row.costing,
-      total_cost: row.total_cost,
-      profit: row.profit,
-      status: row.status,
-      remarks: row.remarks,
-      po: row.po_number,
-      contact: row.contact_number,
-      invoice: row.channel,
-      username: row.customer_username
-    });
-  });
+  const rows = db.prepare(SALES_EXPORT_QUERY).all();
+  const { vatRate } = getTaxSettings(db);
+  writeSalesExportRowsToSheet(salesSheet, rows, vatRate);
 
   if (!filePath) {
     const buffer = await workbook.xlsx.writeBuffer();
@@ -3674,7 +3876,7 @@ async function importFullReportFromExcel(db, filePathOrData, selectedSheetNames 
         if (sheetType === 'SALES') {
           const dateVal = getValByKeys(['DATE']);
           const product = getValByKeys(['PRODUCT']);
-          let customer = getValByKeys(['CUSTOMER', 'NAME/TRADE NAME', 'NAME/TRADENAME', 'NAME']) || 'Walk-in';
+          let customer = getValByKeys(['CUSTOMER', 'NAME/TRADE NAME', 'NAME/TRADENAME', 'NAME']) || 'Customer';
 
           if (!dateVal || !product || dateVal === 'SALES' || dateVal === 'TOTAL COST') {
             return;
@@ -4014,6 +4216,7 @@ async function importFullReportFromExcel(db, filePathOrData, selectedSheetNames 
               }
             }
 
+            const productUnit = getVal('UNIT') || 'pc';
             if (photoPath) {
               db.prepare(`
                 UPDATE products 
@@ -4026,6 +4229,9 @@ async function importFullReportFromExcel(db, filePathOrData, selectedSheetNames 
                 SET stock_qty = ?, srp = ?, average_cost = ?, cost = ?, reorder_point = ?, labor_cost = ?, packaging_cost = ?, sack_weight_kg = ?, updated_at = ? 
                 WHERE id = ?
               `).run(stockQty, srp, cost, cost, reorder, labor, packaging, sackWeight, nowIso(), existing.id);
+            }
+            if (stockQty > 0) {
+              migrateLegacyProductStockToBatches(db, existing.id, { unitCost: cost, srp, unit: productUnit });
             }
             productsUpdated++;
           } else {
@@ -4047,10 +4253,14 @@ async function importFullReportFromExcel(db, filePathOrData, selectedSheetNames 
               }
             }
 
+            const newUnit = getVal('UNIT') || 'pc';
             db.prepare(`
               INSERT INTO products (id, code, name, category, unit, cost, average_cost, srp, stock_qty, reorder_point, labor_cost, packaging_cost, sack_weight_kg, photo_path, created_at, updated_at) 
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(newId, code, name, getVal('CATEGORY') || 'Imported', getVal('UNIT') || 'pc', cost, cost, srp, targetStock, reorder, labor, packaging, sackWeight, photoPath, nowIso(), nowIso());
+            `).run(newId, code, name, getVal('CATEGORY') || 'Imported', newUnit, cost, cost, srp, targetStock, reorder, labor, packaging, sackWeight, photoPath, nowIso(), nowIso());
+            if (targetStock > 0) {
+              migrateLegacyProductStockToBatches(db, newId, { unitCost: cost, srp, unit: newUnit });
+            }
             productsUpdated++;
           }
         }
@@ -4241,8 +4451,8 @@ export function createRepository() {
     exportFinancialStatementToExcel(filePath, filters) {
       return exportFinancialStatementToExcel(db, filePath, filters);
     },
-    exportFullToExcel(filePath) {
-      return exportFullReportToExcel(db, filePath);
+    exportFullToExcel(filePath, filters) {
+      return exportFullReportToExcel(db, filePath, filters);
     },
     exportSalesToExcel(filePath) {
       return exportSalesToExcel(db, filePath);

@@ -222,8 +222,8 @@ function registerIpcHandlers() {
   ipcMain.handle('reports:exportFinancialStatementExcel', async (_, { filePath, filters }) => {
     return repository.exportFinancialStatementToExcel(filePath, filters);
   });
-  ipcMain.handle('app:exportFullExcel', async (_, { filePath }) => {
-    return repository.exportFullToExcel(filePath);
+  ipcMain.handle('app:exportFullExcel', async (_, { filePath, fromDate, toDate }) => {
+    return repository.exportFullToExcel(filePath, { fromDate, toDate });
   });
   ipcMain.handle('app:analyzeExcel', async (_, { filePath }) => {
     return repository.analyzeExcelFile(filePath);

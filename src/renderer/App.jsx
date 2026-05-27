@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import logo from './assets/logo.png';
 import QRCode from 'qrcode';
+import { DatePickerInput } from './DatePickerInput.jsx';
 import {
     calculatePurchaseLine,
     calculateSaleLine,
@@ -21,9 +22,28 @@ import {
     toDateInputValue
 } from '../shared/finance.js';
 
+const SALE_NO_CUSTOMER_LABEL = 'Customer';
+
+function formatSaleCustomerName(customerName) {
+    const name = String(customerName ?? '').trim();
+    return name || SALE_NO_CUSTOMER_LABEL;
+}
+
 function createLocalId(prefix = 'id') {
     const token = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     return `${prefix}-${token}`;
+}
+
+function isSelfHostUrl(urlString, hostIp = '') {
+    try {
+        const hostname = new URL(urlString).hostname.toLowerCase();
+        const normalizedHostIp = String(hostIp || '').trim().toLowerCase();
+        return hostname === 'localhost'
+            || hostname === '127.0.0.1'
+            || (normalizedHostIp && hostname === normalizedHostIp);
+    } catch {
+        return false;
+    }
 }
 
 function ProductSearchSelect({ products, value, onChange, onCreateNew, placeholder = "Choose a product" }) {
@@ -490,10 +510,10 @@ function SupplierSearchSelect({ suppliers, value, onChange, onCreateNew, placeho
 
     const handleSelect = (supplier) => {
         if (supplier) {
-            onChange(supplier.name, supplier.tin || '', supplier.address || '');
+            onChange(supplier.name, supplier.tin || '', supplier.address || '', supplier.category || '');
         } else {
             // If they just typed a name and didn't select, we treat it as a custom name
-            onChange(searchTrimmed, '', '');
+            onChange(searchTrimmed, '', '', '');
         }
         setIsOpen(false);
     };
@@ -669,7 +689,7 @@ function CustomerSearchSelect({ customers, value, onChange, onCreateNew, placeho
         <div className="search-select-wrapper" ref={wrapperRef}>
             <div className="search-select-trigger" onClick={handleToggle}>
                 <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {selectedCustomer ? selectedCustomer.name : 'Walk-in / no customer'}
+                    {selectedCustomer ? selectedCustomer.name : SALE_NO_CUSTOMER_LABEL}
                 </span>
                 <span style={{ fontSize: '0.7rem', opacity: 0.5, marginLeft: 8 }}>▼</span>
             </div>
@@ -702,7 +722,7 @@ function CustomerSearchSelect({ customers, value, onChange, onCreateNew, placeho
                             onClick={() => handleSelect(null)}
                         >
                             <div className="search-item-info">
-                                <span className="search-item-name">Walk-in / no customer</span>
+                                <span className="search-item-name">{SALE_NO_CUSTOMER_LABEL}</span>
                             </div>
                         </div>
                         {filtered.length > 0 ? (
@@ -854,7 +874,8 @@ function resolveSaleShippingFromRecord(sale) {
         return {
             shipping_fee: headerFee ? String(headerFee) : '',
             shipping_cost: headerCost ? String(headerCost) : '',
-            shipping_fee_vat_exempt: Boolean(sale?.isShippingFeeVatExempt ?? sale?.shipping_fee_vat_exempt)
+            shipping_fee_vat_exempt: Boolean(sale?.isShippingFeeVatExempt ?? sale?.shipping_fee_vat_exempt),
+            shipping_cost_vat_exempt: Boolean(sale?.isShippingCostVatExempt ?? sale?.shipping_cost_vat_exempt)
         };
     }
 
@@ -866,7 +887,8 @@ function resolveSaleShippingFromRecord(sale) {
     return {
         shipping_fee: legacyFee ? String(legacyFee) : '',
         shipping_cost: legacyCost ? String(legacyCost) : '',
-        shipping_fee_vat_exempt: legacyVatExempt
+        shipping_fee_vat_exempt: legacyVatExempt,
+        shipping_cost_vat_exempt: false
     };
 }
 
@@ -886,8 +908,27 @@ function blankSaleForm(customerId = '') {
         shipping_cost: '',
         shipping_purchase_receipt: '',
         shipping_fee_vat_exempt: false,
+        shipping_cost_vat_exempt: false,
         items: [blankSaleLine()]
     };
+}
+
+/** Unit cost for the sale edit form — uses stored per-unit costing, else derives from line total_cost. */
+function saleLineUnitCostFromRecord(item) {
+    const qty = toNumber(item.qty ?? item.quantity, 1);
+    const stored = item.costing ?? item.unitCost;
+    const storedNum = toNumber(stored, NaN);
+
+    if (Number.isFinite(storedNum) && storedNum > 0) {
+        return String(storedNum);
+    }
+
+    const totalCost = toNumber(item.totalCost ?? item.total_cost, 0);
+    if (totalCost > 0 && qty > 0) {
+        return String(roundMoney(totalCost / qty));
+    }
+
+    return '';
 }
 
 function saleToForm(sale) {
@@ -912,7 +953,7 @@ function saleToForm(sale) {
                 product_id: item.productId ?? '',
                 qty: String(item.qty ?? '1'),
                 unit_price: String(item.unitPrice ?? '0'),
-                unit_cost: String(item.costing ?? '0'),
+                unit_cost: saleLineUnitCostFromRecord(item),
                 unit: item.unit ?? 'pc',
                 is_vat_exempt: Boolean(item.isVatExempt)
             }))
@@ -921,6 +962,14 @@ function saleToForm(sale) {
 }
 
 function productToForm(product) {
+    const baseCost = toNumber(product.cost ?? product.catalogCost ?? 0);
+    const laborCost = toNumber(product.laborCost ?? product.labor_cost ?? 0);
+    const packagingCost = toNumber(product.packagingCost ?? product.packaging_cost ?? 0);
+    const fullUnitCost = toNumber(
+        product.averageCost ?? product.average_cost,
+        calculateAverageCost(baseCost, laborCost, packagingCost)
+    );
+
     return {
         id: product.id,
         code: product.code ?? '',
@@ -928,13 +977,13 @@ function productToForm(product) {
         description: product.description ?? '',
         category: product.category ?? productCategories[0],
         unit: product.unit ?? 'pc',
-        cost: String(product.cost ?? 0),
-        average_cost: String(calculateAverageCost(product.cost ?? 0, product.laborCost ?? 0, product.packagingCost ?? 0)),
-        srp: String(product.srp ?? 0),
+        cost: String(baseCost),
+        average_cost: String(fullUnitCost),
+        srp: String(product.catalogSrp ?? product.srp ?? 0),
         sack_weight_kg: String(product.sackWeightKg ?? 0),
         price_per_kg: String(product.pricePerKg ?? 0),
-        labor_cost: String(product.laborCost ?? 0),
-        packaging_cost: String(product.packagingCost ?? 0),
+        labor_cost: String(laborCost),
+        packaging_cost: String(packagingCost),
         stock_qty: String(product.stockQty ?? 0),
         is_vat_exempt: Boolean(product.isVatExempt),
         reorder_point: String(product.reorderPoint ?? 10),
@@ -1009,6 +1058,32 @@ function getProductUnitPrice(product, unit, qty = 1) {
     return product.srp ?? 0;
 }
 
+function resolveSaleUnitCostFromBase(baseUnitCost, product, unit) {
+    const laborCost = toNumber(product.laborCost ?? product.labor_cost, 0);
+    const packagingCost = toNumber(product.packagingCost ?? product.packaging_cost, 0);
+    let base = toNumber(baseUnitCost, 0);
+
+    if (isKilogramUnit(unit) && (product.sackWeightKg ?? 0) > 0) {
+        base = base / product.sackWeightKg;
+    }
+
+    return calculateAverageCost(base, laborCost, packagingCost);
+}
+
+function productHasOldStock(product) {
+    if (!product) {
+        return false;
+    }
+
+    const totalStock = toNumber(product.stockQty, 0);
+    const oldestQty = toNumber(product.currentBatchStock, totalStock);
+    const activeBatchCount = Array.isArray(product.batches)
+        ? product.batches.filter((batch) => toNumber(batch.remaining_qty ?? batch.remainingQty) > 0).length
+        : 0;
+
+    return activeBatchCount > 1 && oldestQty > 0 && oldestQty < totalStock;
+}
+
 function getProductUnitCost(product, unit, qty = 1) {
     if (!product) {
         return 0;
@@ -1034,20 +1109,12 @@ function getProductUnitCost(product, unit, qty = 1) {
         const actualFulfilled = requestedStockOut - remainingToFulfill;
         if (actualFulfilled > 0) {
             const weightedBaseCost = totalCost / actualFulfilled;
-            if (isKgSale && (product.sackWeightKg ?? 0) > 0) {
-                return weightedBaseCost / product.sackWeightKg;
-            }
-            return weightedBaseCost;
+            return resolveSaleUnitCostFromBase(weightedBaseCost, product, unit);
         }
     }
 
-    const sackCost = product.averageCost ?? (product.cost ?? 0) + (product.laborCost ?? 0);
-
-    if (isKilogramUnit(unit) && (product.sackWeightKg ?? 0) > 0) {
-        return sackCost / product.sackWeightKg;
-    }
-
-    return sackCost;
+    const catalogBase = toNumber(product.catalogCost ?? product.cost, 0);
+    return resolveSaleUnitCostFromBase(catalogBase, product, unit);
 }
 
 function getStockDeduction(product, qty, unit) {
@@ -1167,10 +1234,11 @@ function summarizeSalePreview(items, products, status, vatRate = defaultTaxSetti
         lines: []
     };
 
-    const applyShipping = !isWalkInChannel(saleOptions.channel);
+    const applyShipping = true;
     const saleShippingFee = applyShipping ? toNumber(saleOptions.shipping_fee, 0) : 0;
     const saleShippingCost = applyShipping ? toNumber(saleOptions.shipping_cost, 0) : 0;
-    const saleShippingVatExempt = applyShipping && Boolean(saleOptions.shipping_fee_vat_exempt);
+    const saleShippingFeeVatExempt = applyShipping && Boolean(saleOptions.shipping_fee_vat_exempt);
+    const saleShippingCostVatExempt = applyShipping && Boolean(saleOptions.shipping_cost_vat_exempt);
 
     for (const item of (items || [])) {
         const product = (products || []).find((entry) => String(entry?.id) === String(item?.product_id));
@@ -1186,7 +1254,8 @@ function summarizeSalePreview(items, products, status, vatRate = defaultTaxSetti
                 totalCost: 0,
                 vatExemptAmount: 0,
                 qty: 0,
-                unitPrice: 0
+                unitPrice: 0,
+                costing: toNumber(item?.unit_cost, 0)
             });
             continue;
         }
@@ -1236,6 +1305,7 @@ function summarizeSalePreview(items, products, status, vatRate = defaultTaxSetti
             availableStock,
             isOverStock,
             currentBatchStock: product.currentBatchStock ?? product.stockQty,
+            hasOldStock: productHasOldStock(product),
             ...line
         });
     }
@@ -1248,7 +1318,8 @@ function summarizeSalePreview(items, products, status, vatRate = defaultTaxSetti
             shippingCost: saleShippingCost,
             unitCost: 0,
             isVatExempt: false,
-            isShippingFeeVatExempt: saleShippingVatExempt,
+            isShippingFeeVatExempt: saleShippingFeeVatExempt,
+            isShippingCostVatExempt: saleShippingCostVatExempt,
             status,
             vatRate
         });
@@ -1259,6 +1330,14 @@ function summarizeSalePreview(items, products, status, vatRate = defaultTaxSetti
         summary.totalCost += shippingLine.totalCost;
         summary.profit += shippingLine.profit;
         summary.shippingMargin = shippingLine.shippingMargin;
+
+        const shippingCostVat = calculatePurchaseLine({
+            grossAmount: saleShippingCost,
+            isVatExempt: saleShippingCostVatExempt,
+            vatRate
+        });
+        summary.shippingCostNetOfVat = shippingCostVat.netOfVat;
+        summary.shippingCostInputVat = shippingCostVat.inputVat;
     }
 
     return summary;
@@ -1414,20 +1493,20 @@ function DashboardTab({ dashboard, meta, filters, onFilterChange, onReorderProdu
                 </div>
                 <label className="field-compact" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <span style={{ fontSize: '0.85rem', color: 'var(--muted)', fontWeight: 600 }}>From</span>
-                    <input
+                    <DatePickerInput
                         className="input input-compact"
-                        type="date"
                         value={filters.fromDate}
-                        onChange={(e) => onFilterChange({ ...filters, fromDate: e.target.value })}
+                        max={filters.toDate || undefined}
+                        onChange={(fromDate) => onFilterChange({ ...filters, fromDate })}
                     />
                 </label>
                 <label className="field-compact" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <span style={{ fontSize: '0.85rem', color: 'var(--muted)', fontWeight: 600 }}>To</span>
-                    <input
+                    <DatePickerInput
                         className="input input-compact"
-                        type="date"
                         value={filters.toDate}
-                        onChange={(e) => onFilterChange({ ...filters, toDate: e.target.value })}
+                        min={filters.fromDate || undefined}
+                        onChange={(toDate) => onFilterChange({ ...filters, toDate })}
                     />
                 </label>
                 <button
@@ -1584,7 +1663,7 @@ function DashboardTab({ dashboard, meta, filters, onFilterChange, onReorderProdu
                                     {dashboard.recentSales.map((sale) => (
                                         <tr key={sale.id}>
                                             <td>{formatDateShort(sale.date)}</td>
-                                            <td>{sale.customerName || 'Walk-in'}</td>
+                                            <td>{formatSaleCustomerName(sale.customerName)}</td>
                                             <td>
                                                 <Pill tone={statusTone(sale.status)}>{saleLabel(sale.status)}</Pill>
                                             </td>
@@ -1691,7 +1770,7 @@ function DashboardTab({ dashboard, meta, filters, onFilterChange, onReorderProdu
                                     {dashboard.arSales.map((sale) => (
                                         <tr key={sale.id}>
                                             <td>{formatDateShort(sale.date)}</td>
-                                            <td>{sale.customerName || 'Walk-in'}</td>
+                                            <td>{formatSaleCustomerName(sale.customerName)}</td>
                                             <td>{sale.receiptNumber ? String(sale.receiptNumber).padStart(5, '0') : '-'}</td>
                                             <td className="numeric">{formatCurrency(sale.grossAmount)}</td>
                                         </tr>
@@ -2120,7 +2199,7 @@ function ProductsTab({
                                         <span>{formatCurrency(product.srp)} SRP</span>
                                         <div className="stack" style={{ gap: '2px', alignItems: 'flex-end' }}>
                                             <span style={{ fontWeight: 600, color: product.stockQty <= (product.reorderPoint ?? 10) ? 'var(--danger)' : 'inherit' }}>{formatQuantity(product.stockQty)} ({product.unit}) in stock</span>
-                                            {product.currentBatchStock < product.stockQty && (
+                                            {productHasOldStock(product) && (
                                                 <span className="pill tone-warning" style={{ fontSize: '0.7rem', padding: '1px 6px' }}>
                                                     {formatQuantity(product.currentBatchStock)} ({product.unit}) old stock
                                                 </span>
@@ -2799,8 +2878,8 @@ function SalesTab({
             }
 
             if (sortConfig.key === 'customerName') {
-                aValue = aValue || 'Walk-in';
-                bValue = bValue || 'Walk-in';
+                aValue = aValue || SALE_NO_CUSTOMER_LABEL;
+                bValue = bValue || SALE_NO_CUSTOMER_LABEL;
             }
 
             if (typeof aValue === 'string' || typeof bValue === 'string') {
@@ -2832,7 +2911,6 @@ function SalesTab({
         () => (products || []).filter((product) => !isNonSaleProduct(product)),
         [products]
     );
-    const showShippingFields = !isWalkInChannel(form.channel);
     const preview = summarizeSalePreview(
         form.items,
         products,
@@ -2843,7 +2921,8 @@ function SalesTab({
             channel: form.channel,
             shipping_fee: form.shipping_fee,
             shipping_cost: form.shipping_cost,
-            shipping_fee_vat_exempt: form.shipping_fee_vat_exempt
+            shipping_fee_vat_exempt: form.shipping_fee_vat_exempt,
+            shipping_cost_vat_exempt: form.shipping_cost_vat_exempt
         }
     );
     const validItems = (form.items || []).filter((item) => item.product_id);
@@ -2853,8 +2932,7 @@ function SalesTab({
     if (!form.date) {
         saveBlockerMessage = 'Sale date is required.';
     } else if (
-        showShippingFields
-        && toNumber(form.shipping_cost, 0) > 0
+        toNumber(form.shipping_cost, 0) > 0
         && !String(form.shipping_purchase_receipt ?? '').trim()
     ) {
         saveBlockerMessage = 'Courier receipt number is required when shipping cost is entered.';
@@ -2996,16 +3074,7 @@ function SalesTab({
                                                     autoFocus
                                                     onChange={(event) => {
                                                         const nextChannel = event.target.value;
-                                                        setForm({
-                                                            ...form,
-                                                            channel: nextChannel,
-                                                            ...(isWalkInChannel(nextChannel) ? {
-                                                                shipping_fee: '',
-                                                                shipping_cost: '',
-                                                                shipping_purchase_receipt: '',
-                                                                shipping_fee_vat_exempt: false
-                                                            } : {})
-                                                        });
+                                                        setForm({ ...form, channel: nextChannel });
                                                     }}
                                                 />
                                                 <button
@@ -3030,16 +3099,7 @@ function SalesTab({
                                                         setForm({ ...form, channel: '' });
                                                     } else {
                                                         const nextChannel = event.target.value;
-                                                        setForm({
-                                                            ...form,
-                                                            channel: nextChannel,
-                                                            ...(isWalkInChannel(nextChannel) ? {
-                                                                shipping_fee: '',
-                                                                shipping_cost: '',
-                                                                shipping_purchase_receipt: '',
-                                                                shipping_fee_vat_exempt: false
-                                                            } : {})
-                                                        });
+                                                        setForm({ ...form, channel: nextChannel });
                                                     }
                                                 }}
                                             >
@@ -3337,7 +3397,7 @@ function SalesTab({
                                                     <div className="mini-list-metrics">
                                                         <div className="stack" style={{ alignItems: 'flex-end', gap: '2px' }}>
                                                             <strong>{formatCurrency(line.grossAmount)}</strong>
-                                                            {line.currentBatchStock < (line.availableStock || 0) && (
+                                                            {line.hasOldStock && (
                                                                 <span className="pill tone-warning" style={{ fontSize: '0.65rem', padding: '1px 5px' }}>
                                                                     {formatQuantity(line.currentBatchStock)} old stock
                                                                 </span>
@@ -3352,8 +3412,7 @@ function SalesTab({
                                 )}
                                 </div>
 
-                                {showShippingFields ? (
-                                    <div className="panel sale-shipping-panel">
+                                <div className="panel sale-shipping-panel">
                                         <div className="panel-section-head">
                                             <strong>Shipping</strong>
                                             <span className="muted">One charge for the whole sale (channel: {form.channel || '—'}).</span>
@@ -3403,19 +3462,52 @@ function SalesTab({
                                                         min="0"
                                                         placeholder="0"
                                                         value={form.shipping_cost !== '' && form.shipping_cost !== undefined ? form.shipping_cost : ''}
-                                                        onChange={(event) => setForm({ ...form, shipping_cost: event.target.value })}
+                                                        onChange={(event) => setForm({
+                                                            ...form,
+                                                            shipping_cost: event.target.value,
+                                                            shipping_cost_vat_exempt: event.target.value
+                                                                ? form.shipping_cost_vat_exempt
+                                                                : false
+                                                        })}
                                                     />
                                                 </label>
                                             </div>
-                                            <label className={`checkbox-field compact ${!toNumber(form.shipping_fee, 0) ? 'is-disabled' : ''}`}>
-                                                <input
-                                                    type="checkbox"
-                                                    checked={Boolean(form.shipping_fee_vat_exempt)}
-                                                    disabled={!toNumber(form.shipping_fee, 0)}
-                                                    onChange={(event) => setForm({ ...form, shipping_fee_vat_exempt: event.target.checked })}
-                                                />
-                                                <span>Shipping VAT exempt</span>
-                                            </label>
+                                            <div className="sale-shipping-vat-row">
+                                                <label className={`checkbox-field compact ${!toNumber(form.shipping_fee, 0) ? 'is-disabled' : ''}`}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={Boolean(form.shipping_fee_vat_exempt)}
+                                                        disabled={!toNumber(form.shipping_fee, 0)}
+                                                        onChange={(event) => setForm({ ...form, shipping_fee_vat_exempt: event.target.checked })}
+                                                    />
+                                                    <span>Fee VAT exempt</span>
+                                                </label>
+                                                <label className={`checkbox-field compact ${!toNumber(form.shipping_cost, 0) ? 'is-disabled' : ''}`}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={Boolean(form.shipping_cost_vat_exempt)}
+                                                        disabled={!toNumber(form.shipping_cost, 0)}
+                                                        onChange={(event) => setForm({ ...form, shipping_cost_vat_exempt: event.target.checked })}
+                                                    />
+                                                    <span>Cost VAT exempt</span>
+                                                </label>
+                                            </div>
+                                            {toNumber(form.shipping_cost, 0) > 0 ? (
+                                                <div className="sale-shipping-cost-vat">
+                                                    <div className="preview-row">
+                                                        <span>Cost net of VAT</span>
+                                                        <strong>
+                                                            {form.shipping_cost_vat_exempt
+                                                                ? formatCurrency(toNumber(form.shipping_cost, 0))
+                                                                : formatCurrency(preview.shippingCostNetOfVat ?? 0)}
+                                                        </strong>
+                                                    </div>
+                                                    <div className="preview-row">
+                                                        <span>Cost input VAT</span>
+                                                        <strong>{formatCurrency(preview.shippingCostInputVat ?? 0)}</strong>
+                                                    </div>
+                                                </div>
+                                            ) : null}
                                             {(toNumber(form.shipping_fee, 0) > 0 || toNumber(form.shipping_cost, 0) > 0) ? (
                                                 <div className="sale-shipping-margin">
                                                     <span>Shipping margin</span>
@@ -3424,7 +3516,6 @@ function SalesTab({
                                             ) : null}
                                         </div>
                                     </div>
-                                ) : null}
                             </div>
                         </div>
                     </div>
@@ -3635,14 +3726,14 @@ function SalesTab({
                                             Gross {sortConfig.key === 'grossAmount' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
                                         </div>
                                     </th>
-                                    <th onClick={() => handleSort('outputVat')} className="sortable-header numeric">
-                                        <div className="header-sort-content numeric">
-                                            Output VAT {sortConfig.key === 'outputVat' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
-                                        </div>
-                                    </th>
                                     <th onClick={() => handleSort('netOfVat')} className="sortable-header numeric">
                                         <div className="header-sort-content numeric">
                                             Net of vat {sortConfig.key === 'netOfVat' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                                        </div>
+                                    </th>
+                                    <th onClick={() => handleSort('outputVat')} className="sortable-header numeric">
+                                        <div className="header-sort-content numeric">
+                                            Output VAT {sortConfig.key === 'outputVat' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
                                         </div>
                                     </th>
                                     <th onClick={() => handleSort('profit')} className="sortable-header numeric">
@@ -3682,7 +3773,7 @@ function SalesTab({
                                         <td>{sale.siNumber || '-'}</td>
                                         <td>{sale.receiptNumber ? String(sale.receiptNumber).padStart(4, '0') : '-'}</td>
                                         <td>
-                                            <div style={{ fontWeight: 600 }}>{sale.customerName || 'Walk-in'}</div>
+                                            <div style={{ fontWeight: 600 }}>{formatSaleCustomerName(sale.customerName)}</div>
                                             {sale.items && sale.items.length > 0 && (
                                                 <div className="muted" style={{ fontSize: '0.72rem', marginTop: '2px', lineHeight: 1.4, color: 'var(--primary-strong)', opacity: 0.8 }}>
                                                     {sale.items.map(i => `${i.name} (x${formatQuantity(i.qty)})`).join(', ')}
@@ -3716,8 +3807,8 @@ function SalesTab({
                                             </select>
                                         </td>
                                         <td className="numeric">{formatCurrency(sale.grossAmount)}</td>
-                                        <td className="numeric">{formatCurrency(sale.outputVat)}</td>
                                         <td className="numeric">{formatCurrency(sale.netOfVat)}</td>
+                                        <td className="numeric">{formatCurrency(sale.outputVat)}</td>
                                         <td className="numeric">{formatCurrency(sale.profit)}</td>
 
                                         {activeSaleId === sale.id && (
@@ -4070,10 +4161,11 @@ function PurchasesTab({
                                                     <SupplierSearchSelect
                                                         suppliers={suppliers}
                                                         value={form.supplier_name}
-                                                        onChange={(name, tin, addr) => {
+                                                        onChange={(name, tin, addr, category) => {
                                                             const updates = { supplier_name: name };
                                                             if (tin) updates.supplier_tin = tin;
                                                             if (addr) updates.address = addr;
+                                                            if (category) updates.supplier_category = category;
                                                             setForm({ ...form, ...updates });
                                                         }}
                                                         onCreateNew={onCreateSupplier}
@@ -4217,10 +4309,11 @@ function PurchasesTab({
                                                     <SupplierSearchSelect
                                                         suppliers={suppliers}
                                                         value={form.supplier_name}
-                                                        onChange={(name, tin, addr) => {
+                                                        onChange={(name, tin, addr, category) => {
                                                             const updates = { supplier_name: name };
                                                             if (tin) updates.supplier_tin = tin;
                                                             if (addr) updates.address = addr;
+                                                            if (category) updates.supplier_category = category;
                                                             setForm({ ...form, ...updates });
                                                         }}
                                                         onCreateNew={onCreateSupplier}
@@ -4655,8 +4748,8 @@ function GainLossTab({ api, flash, companyNames }) {
     const [search, setSearch] = useState('');
     const [filters, setFilters] = useState({
         companyName: companyNames[0] || '',
-        fromDate: new Date().toISOString().slice(0, 7) + '-01',
-        toDate: new Date().toISOString().slice(0, 10),
+        fromDate: toDateInputValue(new Date(new Date().getFullYear(), new Date().getMonth(), 1)),
+        toDate: toDateInputValue(),
     });
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [formSession, setFormSession] = useState(0);
@@ -4668,7 +4761,7 @@ function GainLossTab({ api, flash, companyNames }) {
     const createEmptyForm = useCallback(() => ({
         id: '',
         companyName: filters.companyName || companyNames[0] || '',
-        date: new Date().toISOString().slice(0, 10),
+        date: toDateInputValue(),
         voucherNo: '',
         supplierName: '',
         amountPaid: '',
@@ -4678,7 +4771,7 @@ function GainLossTab({ api, flash, companyNames }) {
     const [form, setForm] = useState(() => ({
         id: '',
         companyName: companyNames[0] || '',
-        date: new Date().toISOString().slice(0, 10),
+        date: toDateInputValue(),
         voucherNo: '',
         supplierName: '',
         amountPaid: '',
@@ -4840,17 +4933,17 @@ function GainLossTab({ api, flash, companyNames }) {
                 >
                     {companyNames.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
-                <input
+                <DatePickerInput
                     className="input input-compact"
-                    type="date"
                     value={filters.fromDate}
-                    onChange={e => setFilters({ ...filters, fromDate: e.target.value })}
+                    max={filters.toDate || undefined}
+                    onChange={(fromDate) => setFilters({ ...filters, fromDate })}
                 />
-                <input
+                <DatePickerInput
                     className="input input-compact"
-                    type="date"
                     value={filters.toDate}
-                    onChange={e => setFilters({ ...filters, toDate: e.target.value })}
+                    min={filters.fromDate || undefined}
+                    onChange={(toDate) => setFilters({ ...filters, toDate })}
                 />
                 <input
                     className="input input-compact"
@@ -5000,12 +5093,11 @@ function GainLossTab({ api, flash, companyNames }) {
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                                 <label className="field">
                                     <span>Date</span>
-                                    <input
+                                    <DatePickerInput
                                         ref={firstFieldRef}
                                         className="input"
-                                        type="date"
                                         value={form.date}
-                                        onChange={(e) => setForm({ ...form, date: e.target.value })}
+                                        onChange={(date) => setForm({ ...form, date })}
                                     />
                                 </label>
                                 <label className="field">
@@ -5184,17 +5276,17 @@ function ReportsTab({ api, flash, filters, setFilters, isClientMode }) {
                 >
                     {companyNames.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
-                <input
+                <DatePickerInput
                     className="input input-compact"
-                    type="date"
                     value={filters.fromDate}
-                    onChange={(e) => setFilters({ ...filters, fromDate: e.target.value })}
+                    max={filters.toDate || undefined}
+                    onChange={(fromDate) => setFilters({ ...filters, fromDate })}
                 />
-                <input
+                <DatePickerInput
                     className="input input-compact"
-                    type="date"
                     value={filters.toDate}
-                    onChange={(e) => setFilters({ ...filters, toDate: e.target.value })}
+                    min={filters.fromDate || undefined}
+                    onChange={(toDate) => setFilters({ ...filters, toDate })}
                 />
                 <button className="button primary" onClick={handleExport}>Export Excel</button>
             </div>
@@ -5303,8 +5395,35 @@ function SettingsTab({
         vatRate: String(roundMoney((taxSettings?.vatRate ?? defaultTaxSettings.vatRate) * 100)),
         incomeTaxRate: String(roundMoney((taxSettings?.incomeTaxRate ?? defaultTaxSettings.incomeTaxRate) * 100))
     }));
+    const [exportDates, setExportDates] = useState(() => ({
+        fromDate: toDateInputValue(new Date(new Date().getFullYear(), 0, 1)),
+        toDate: toDateInputValue()
+    }));
     const [savingTax, setSavingTax] = useState(false);
     const [qrCodeUrl, setQrCodeUrl] = useState('');
+
+    const exportDateFields = (
+        <div className="settings-export-dates" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+            <label className="field">
+                <span>From (day / month / year)</span>
+                <DatePickerInput
+                    className="input"
+                    value={exportDates.fromDate}
+                    max={exportDates.toDate || undefined}
+                    onChange={(fromDate) => setExportDates({ ...exportDates, fromDate })}
+                />
+            </label>
+            <label className="field">
+                <span>To (day / month / year)</span>
+                <DatePickerInput
+                    className="input"
+                    value={exportDates.toDate}
+                    min={exportDates.fromDate || undefined}
+                    onChange={(toDate) => setExportDates({ ...exportDates, toDate })}
+                />
+            </label>
+        </div>
+    );
 
     useEffect(() => {
         if (serverInfo.running && serverInfo.ip) {
@@ -5355,9 +5474,13 @@ function SettingsTab({
                                 <strong style={{ fontSize: '1rem' }}>Full Database Backup</strong>
                             </div>
                             <div className="settings-accordion-body single" style={{ display: 'block', padding: '1.25rem', borderTop: '1px solid var(--border)' }}>
-                                <p className="row-note" style={{ marginBottom: '1rem' }}>Includes all categories below. Pictures are supported in the Excel file.</p>
+                                <p className="row-note" style={{ marginBottom: '1rem' }}>Includes all categories below. Pictures are supported in the Excel file. Sales and expenses are limited to the date range you choose; inventory and customers are always included.</p>
+                                {exportDateFields}
+                                <p className="muted" style={{ fontSize: '0.8rem', marginBottom: '1rem' }}>
+                                    Export period: {formatDateShort(exportDates.fromDate)} – {formatDateShort(exportDates.toDate)}
+                                </p>
                                 <div className="settings-row-actions">
-                                    <button className="button primary" type="button" onClick={onExportFull}>Export Excel</button>
+                                    <button className="button primary" type="button" onClick={() => onExportFull(exportDates)}>Export Excel</button>
                                 </div>
                             </div>
                         </div>
@@ -5555,7 +5678,7 @@ function SettingsTab({
                                             </Pill>
                                         </div>
                                         <p className="muted" style={{ fontSize: '0.78rem' }}>
-                                            Allows linking this secondary computer's database directly to your primary shop computer.
+                                            For a second shop PC only. Do not connect to localhost or this PC&apos;s own IP — that blocks normal saves. Phones use http://HOST-IP:3847 instead.
                                         </p>
 
                                         {!connectionStatus.connected ? (
@@ -5605,9 +5728,13 @@ function SettingsTab({
                             <b aria-hidden="true">v</b>
                         </summary>
                         <div className="settings-accordion-body single">
-                            <p className="row-note">Includes all categories below. Pictures are supported in the Excel file.</p>
+                            <p className="row-note">Includes all categories below. Pictures are supported in the Excel file. Sales and expenses are limited to the date range you choose; inventory and customers are always included.</p>
+                            {exportDateFields}
+                            <p className="muted" style={{ fontSize: '0.8rem', marginBottom: '1rem' }}>
+                                Export period: {formatDateShort(exportDates.fromDate)} – {formatDateShort(exportDates.toDate)}
+                            </p>
                             <div className="settings-row-actions">
-                                <button className="button primary" type="button" onClick={onExportFull}>Export Excel</button>
+                                <button className="button primary" type="button" onClick={() => onExportFull(exportDates)}>Export Excel</button>
                                 <button className="button secondary" type="button" onClick={onImportFull}>Import Excel / CSV</button>
                             </div>
                         </div>
@@ -5649,8 +5776,8 @@ function ReceiptModal({ sale, onClose }) {
 
                         <div className="receipt-sold-to-box">
                             <span className="receipt-box-label">SOLD TO:</span>
-                            <span className="receipt-box-value" title={sale.customerName || 'Walk-In Customer'}>
-                                {sale.customerName || 'Walk-In Customer'}
+                            <span className="receipt-box-value" title={formatSaleCustomerName(sale.customerName)}>
+                                {formatSaleCustomerName(sale.customerName)}
                             </span>
                         </div>
 
@@ -6257,7 +6384,6 @@ export default function App() {
         filePath: '',
         sheets: []
     });
-
     const [splitDialog, setSplitDialog] = useState({ isOpen: false, product: null });
 
     const [productSearch, setProductSearch] = useState('');
@@ -6291,7 +6417,7 @@ export default function App() {
         toDate: ''
     });
     const [reportFilters, setReportFilters] = useState({
-        fromDate: toDateInputValue(new Date(new Date().getFullYear(), 0, 1)), // Start of year
+        fromDate: toDateInputValue(new Date(new Date().getFullYear(), 0, 1)),
         toDate: toDateInputValue(),
         companyName: companyNames[0]
     });
@@ -6342,7 +6468,20 @@ export default function App() {
         async function initNetwork() {
             try {
                 const info = await api.sync.getServerInfo();
-                const status = api.sync.getConnectionStatus();
+                let status = api.sync.getConnectionStatus();
+
+                if (status.connected && status.url && info?.running && isSelfHostUrl(status.url, info.ip)) {
+                    await api.sync.disconnectFromHost();
+                    status = api.sync.getConnectionStatus();
+                    if (alive) {
+                        flash('This PC is the host — using the local database (not localhost sync).', 'info');
+                    }
+                }
+
+                if (api.sync.subscribeLocalUpdates) {
+                    await api.sync.subscribeLocalUpdates();
+                }
+
                 if (alive) {
                     setServerInfo(info);
                     setConnectionStatus(status);
@@ -6353,10 +6492,39 @@ export default function App() {
             }
         }
 
+        function reloadAfterRemoteChange(msg) {
+            const entity = msg.channel.split(':')[0];
+            switch (entity) {
+                case 'products':
+                    void loadProductsData(true);
+                    void loadDashboardData();
+                    break;
+                case 'customers':
+                    void loadCustomersData(true);
+                    break;
+                case 'suppliers':
+                    void loadSuppliersData(true);
+                    break;
+                case 'sales':
+                    void loadSalesData(true);
+                    void loadProductsData(true);
+                    void loadCustomersData(true);
+                    void loadDashboardData();
+                    break;
+                case 'purchases':
+                    void loadPurchasesData(true);
+                    void loadProductsData(true);
+                    void loadSuppliersData(true);
+                    void loadDashboardData();
+                    break;
+                default:
+                    void loadWorkspace(true);
+            }
+        }
+
         api.sync.onDataChanged((msg) => {
             console.log('[sync] Data changed:', msg);
-            // Reload the current workspace view
-            loadWorkspace(true);
+            reloadAfterRemoteChange(msg);
             flash(`Data updated from ${msg.channel.split(':')[0]}`, 'info');
         });
 
@@ -6457,9 +6625,23 @@ export default function App() {
 
     async function handleToggleServer(enabled) {
         try {
+            if (!enabled && connectionStatus.connected && connectionStatus.url) {
+                const info = await api.sync.getServerInfo();
+                if (isSelfHostUrl(connectionStatus.url, info?.ip)) {
+                    await api.sync.disconnectFromHost();
+                    setConnectionStatus({ connected: false, url: null, isClientMode: false });
+                    flash('Disconnected from local sync server before stopping it.', 'info');
+                }
+            }
+
             const nextInfo = await api.sync.toggleServer(enabled);
             setServerInfo(nextInfo);
-            flash(enabled ? 'Host server started.' : 'Host server stopped.', 'success');
+            flash(
+                enabled
+                    ? 'Host server started. Phones can open http://YOUR-IP:3847 to add/edit data.'
+                    : 'Host server stopped. Browser/phone clients cannot save until it is started again.',
+                'success'
+            );
         } catch (error) {
             flash(error.message || 'Failed to toggle server.', 'danger');
         }
@@ -6470,8 +6652,19 @@ export default function App() {
         setLoading(true);
         try {
             const url = remoteHostUrl.trim().startsWith('http') ? remoteHostUrl.trim() : `http://${remoteHostUrl.trim()}`;
+            const info = await api.sync.getServerInfo();
+
+            if (info?.running && isSelfHostUrl(url, info.ip)) {
+                flash(
+                    'This PC is already the host. Do not connect to localhost or your own IP — use the app normally. If you see "Linked", click Disconnect & Use Local SQLite.',
+                    'warning'
+                );
+                setLoading(false);
+                return;
+            }
+
             await api.sync.connectToHost(url);
-            flash('Connected to remote host.', 'success');
+            flash('Connected to host. Saves will write to that computer\'s database.', 'success');
         } catch (error) {
             flash(error.message || 'Failed to connect to host.', 'danger');
         } finally {
@@ -6563,18 +6756,18 @@ export default function App() {
         if (!api) return;
         switch (activeTab) {
             case 'dashboard': loadDashboardData(); break;
-            case 'products': loadProductsData(); break;
-            case 'customers': loadCustomersData(); break;
-            case 'suppliers': loadSuppliersData(); break;
+            case 'products': loadProductsData(true); break;
+            case 'customers': loadCustomersData(true); break;
+            case 'suppliers': loadSuppliersData(true); break;
             case 'sales':
-                loadSalesData();
-                loadProductsData();
-                loadCustomersData();
+                loadSalesData(true);
+                loadProductsData(true);
+                loadCustomersData(true);
                 break;
             case 'purchases':
-                loadPurchasesData();
-                loadProductsData();
-                loadSuppliersData();
+                loadPurchasesData(true);
+                loadProductsData(true);
+                loadSuppliersData(true);
                 break;
             case 'reports':
                 // ReportsTab handles its own data loading via its own useEffect,
@@ -6582,6 +6775,41 @@ export default function App() {
                 break;
         }
     }, [api, activeTab]);
+
+    // Fallback when SSE misses an update (network tab sleep, reconnect gaps, etc.)
+    useEffect(() => {
+        if (!api) return;
+
+        let lastVersion = 0;
+        let alive = true;
+
+        async function pollVersion() {
+            const url = connectionStatus.url
+                || (serverInfo.running ? `http://127.0.0.1:${serverInfo.port || 3847}` : null);
+            if (!url || !alive) return;
+
+            try {
+                const res = await fetch(`${url.replace(/\/+$/, '')}/api/version`);
+                const { version } = await res.json();
+                if (version > lastVersion) {
+                    if (lastVersion > 0) {
+                        await loadWorkspace(true);
+                    }
+                    lastVersion = version;
+                }
+            } catch {
+                // Host may be briefly offline
+            }
+        }
+
+        const timer = setInterval(pollVersion, 4000);
+        void pollVersion();
+
+        return () => {
+            alive = false;
+            clearInterval(timer);
+        };
+    }, [api, serverInfo.running, serverInfo.port, connectionStatus.url]);
 
     useEffect(() => {
         if (!api) {
@@ -6757,7 +6985,7 @@ export default function App() {
                 ...productForm,
                 category: (productForm.category || '').trim(),
                 unit: (productForm.unit || '').trim(),
-                average_cost: String(calculateAverageCost(productForm.cost, productForm.labor_cost))
+                average_cost: String(calculateAverageCost(productForm.cost, productForm.labor_cost, productForm.packaging_cost))
             };
 
             savedProduct = await api.products.save(payload);
@@ -6992,8 +7220,35 @@ export default function App() {
         await handleGenericExport('Customer-List', 'Customers exported successfully!', api.data.exportCustomersExcel);
     }
 
-    async function handleExportFull() {
-        await handleGenericExport('Full-Backup', 'Full database exported successfully!', api.data.exportFullExcel);
+    async function handleExportFull(exportDates = {}) {
+        const { fromDate, toDate } = exportDates;
+        const dateSuffix = fromDate && toDate ? `${fromDate}_to_${toDate}` : new Date().toISOString().slice(0, 10);
+
+        try {
+            const fileName = `Full-Backup-${dateSuffix}.xlsx`;
+            const exportOpts = { fromDate, toDate };
+
+            if (connectionStatus.isClientMode) {
+                flash('Generating Excel file...', 'neutral');
+                const base64Data = await api.data.exportFullExcel(exportOpts);
+                downloadBase64File(base64Data, fileName);
+                flash('Full database exported successfully!', 'success');
+            } else {
+                const filePath = await api.files.saveDialog({
+                    title: 'Export Full Database Backup',
+                    defaultPath: fileName,
+                    filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
+                });
+
+                if (filePath) {
+                    flash('Exporting Excel file...', 'neutral');
+                    await api.data.exportFullExcel({ filePath, ...exportOpts });
+                    flash('Full database exported successfully! Click to open.', 'success', { onClick: () => api.app.openPath(filePath) });
+                }
+            }
+        } catch (error) {
+            flash(error.message || 'Failed to export Full-Backup.', 'error');
+        }
     }
 
     async function handleGenericExport(prefix, successMsg, exportFn) {
@@ -7167,7 +7422,15 @@ export default function App() {
     }
 
     function handleEditPurchase(purchase) {
-        setPurchaseForm(purchaseToForm(purchase));
+        const form = purchaseToForm(purchase);
+        const matchedSupplier = suppliers.find(
+            (entry) => entry.name && form.supplier_name
+                && entry.name.toLowerCase() === form.supplier_name.toLowerCase()
+        );
+        if (matchedSupplier?.category) {
+            form.supplier_category = matchedSupplier.category;
+        }
+        setPurchaseForm(form);
         setShowPurchaseForm(true);
     }
 
@@ -7423,8 +7686,7 @@ export default function App() {
         }
 
         if (
-            !isWalkInChannel(saleForm.channel)
-            && toNumber(saleForm.shipping_cost, 0) > 0
+            toNumber(saleForm.shipping_cost, 0) > 0
             && !String(saleForm.shipping_purchase_receipt ?? '').trim()
         ) {
             flash('Courier receipt number is required when shipping cost is entered.', 'danger');
@@ -7442,7 +7704,8 @@ export default function App() {
                 channel: saleForm.channel,
                 shipping_fee: saleForm.shipping_fee,
                 shipping_cost: saleForm.shipping_cost,
-                shipping_fee_vat_exempt: saleForm.shipping_fee_vat_exempt
+                shipping_fee_vat_exempt: saleForm.shipping_fee_vat_exempt,
+                shipping_cost_vat_exempt: saleForm.shipping_cost_vat_exempt
             }
         );
 
@@ -7461,15 +7724,15 @@ export default function App() {
         }
 
         try {
-            const walkIn = isWalkInChannel(saleForm.channel);
             const payload = {
                 ...saleForm,
                 channel: (saleForm.channel || '').trim(),
                 company_name: (saleForm.company_name || '').trim(),
-                shipping_fee: walkIn ? 0 : (saleForm.shipping_fee ? parseFloat(saleForm.shipping_fee) : 0),
-                shipping_cost: walkIn ? 0 : (saleForm.shipping_cost ? parseFloat(saleForm.shipping_cost) : 0),
-                shipping_purchase_receipt: walkIn ? '' : String(saleForm.shipping_purchase_receipt ?? '').trim(),
-                shipping_fee_vat_exempt: walkIn ? false : Boolean(saleForm.shipping_fee_vat_exempt),
+                shipping_fee: saleForm.shipping_fee ? parseFloat(saleForm.shipping_fee) : 0,
+                shipping_cost: saleForm.shipping_cost ? parseFloat(saleForm.shipping_cost) : 0,
+                shipping_purchase_receipt: String(saleForm.shipping_purchase_receipt ?? '').trim(),
+                shipping_fee_vat_exempt: Boolean(saleForm.shipping_fee_vat_exempt),
+                shipping_cost_vat_exempt: Boolean(saleForm.shipping_cost_vat_exempt),
                 items: validItems.map((item) => ({
                     product_id: item.product_id,
                     qty: item.qty,
@@ -7898,6 +8161,38 @@ export default function App() {
                 </aside>
 
                 <main className="workspace">
+                    {connectionStatus.isClientMode ? (
+                        <div
+                            className="connection-mode-banner"
+                            style={{
+                                margin: '0 0 16px',
+                                padding: '12px 16px',
+                                borderRadius: 'var(--radius-md)',
+                                border: '1px solid rgba(15, 118, 110, 0.35)',
+                                background: 'rgba(15, 118, 110, 0.08)',
+                                fontSize: '0.9rem',
+                                lineHeight: 1.5
+                            }}
+                        >
+                            <strong>Network / browser mode</strong>
+                            <span style={{ display: 'block', marginTop: '4px' }}>
+                                You can add and edit sales, purchases, products, and Gain/Loss here — data is saved on the host PC at{' '}
+                                <code>{connectionStatus.url}</code>.
+                                {' '}Excel export works; picking files on this device uses the browser file picker.
+                                {' '}The host AgriLedger app must stay open with the sync server running.
+                            </span>
+                            {typeof window.agriLedger?.app?.openDataFolder === 'function' ? (
+                                <button
+                                    className="button secondary"
+                                    type="button"
+                                    style={{ marginTop: '10px' }}
+                                    onClick={handleDisconnectRemote}
+                                >
+                                    Disconnect &amp; use local database
+                                </button>
+                            ) : null}
+                        </div>
+                    ) : null}
                     <header className="workspace-header">
                         <div className="header-title-group">
                             <button className="button ghost hamburger-menu" type="button" onClick={() => setIsSidebarOpen(true)}>
@@ -8065,6 +8360,7 @@ export default function App() {
                                         shipping_cost: fullSale.shippingCost ?? 0,
                                         shipping_purchase_receipt: fullSale.shippingPurchaseReceipt ?? '',
                                         shipping_fee_vat_exempt: Boolean(fullSale.isShippingFeeVatExempt),
+                                        shipping_cost_vat_exempt: Boolean(fullSale.isShippingCostVatExempt),
                                         items: fullSale.items.map(i => ({
                                             product_id: i.productId,
                                             qty: i.qty,
@@ -8473,12 +8769,38 @@ export default function App() {
                             </div>
                             <div className="field-grid">
                                 <label className="field">
-                                    <span>Cost <span style={{ color: 'var(--danger)' }}>*</span></span>
+                                    <span>Base cost <span style={{ color: 'var(--danger)' }}>*</span></span>
                                     <input
                                         className="input"
                                         type="number"
+                                        step="0.01"
+                                        min="0"
                                         value={productForm.cost}
-                                        onChange={(event) => setProductForm({ ...productForm, cost: event.target.value })}
+                                        onChange={(event) => {
+                                            const cost = event.target.value;
+                                            setProductForm({
+                                                ...productForm,
+                                                cost,
+                                                average_cost: String(calculateAverageCost(
+                                                    cost,
+                                                    productForm.labor_cost,
+                                                    productForm.packaging_cost
+                                                ))
+                                            });
+                                        }}
+                                    />
+                                </label>
+                                <label className="field">
+                                    <span>Full unit cost</span>
+                                    <input
+                                        className="input"
+                                        readOnly
+                                        value={formatCurrency(productForm.average_cost || calculateAverageCost(
+                                            productForm.cost,
+                                            productForm.labor_cost,
+                                            productForm.packaging_cost
+                                        ))}
+                                        style={{ background: '#f8f9fa', fontWeight: 'bold' }}
                                     />
                                 </label>
                                 <label className="field">
@@ -8509,11 +8831,17 @@ export default function App() {
                                     />
                                 </label>
                                 <label className="field">
-                                    <span>Stock value (Cost × Qty)</span>
+                                    <span>Stock value (Full cost × Qty)</span>
                                     <input
                                         className="input"
                                         readOnly
-                                        value={formatCurrency((parseFloat(productForm.cost) || 0) * (parseFloat(productForm.stock_qty) || 0))}
+                                        value={formatCurrency(
+                                            (parseFloat(productForm.average_cost) || calculateAverageCost(
+                                                productForm.cost,
+                                                productForm.labor_cost,
+                                                productForm.packaging_cost
+                                            )) * (parseFloat(productForm.stock_qty) || 0)
+                                        )}
                                         style={{ background: '#f8f9fa', fontWeight: 'bold' }}
                                     />
                                 </label>
@@ -8527,6 +8855,50 @@ export default function App() {
                             </button>
                             {showAdvancedProductFields ? (
                                 <div className="field-grid">
+                                    <label className="field">
+                                        <span>Labor cost (per unit)</span>
+                                        <input
+                                            className="input"
+                                            type="number"
+                                            step="0.01"
+                                            min="0"
+                                            value={productForm.labor_cost}
+                                            onChange={(event) => {
+                                                const labor_cost = event.target.value;
+                                                setProductForm({
+                                                    ...productForm,
+                                                    labor_cost,
+                                                    average_cost: String(calculateAverageCost(
+                                                        productForm.cost,
+                                                        labor_cost,
+                                                        productForm.packaging_cost
+                                                    ))
+                                                });
+                                            }}
+                                        />
+                                    </label>
+                                    <label className="field">
+                                        <span>Packaging cost (per unit)</span>
+                                        <input
+                                            className="input"
+                                            type="number"
+                                            step="0.01"
+                                            min="0"
+                                            value={productForm.packaging_cost}
+                                            onChange={(event) => {
+                                                const packaging_cost = event.target.value;
+                                                setProductForm({
+                                                    ...productForm,
+                                                    packaging_cost,
+                                                    average_cost: String(calculateAverageCost(
+                                                        productForm.cost,
+                                                        productForm.labor_cost,
+                                                        packaging_cost
+                                                    ))
+                                                });
+                                            }}
+                                        />
+                                    </label>
                                     <label className="field">
                                         <span>Sack weight (kg) (optional)</span>
                                         <input

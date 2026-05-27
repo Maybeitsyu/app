@@ -115,7 +115,7 @@ export function createSyncServer(repository, photosDir, uiDir) {
       'sales:importCsv': (p) => repository.importSalesFromCsv(p.csvContent),
       'sales:exportExcel':             (p) => repository.exportSalesToExcel(p?.filePath),
       'reports:exportFinancialStatementExcel': (p) => repository.exportFinancialStatementToExcel(p?.filePath, p?.filters),
-      'app:exportFullExcel':           (p) => repository.exportFullToExcel(p?.filePath),
+      'app:exportFullExcel':           (p) => repository.exportFullToExcel(p?.filePath, { fromDate: p?.fromDate, toDate: p?.toDate }),
       'products:exportExcel':          (p) => repository.exportProductsToExcel(p?.filePath),
       'purchases:exportExcel':         (p) => repository.exportPurchasesToExcel(p?.filePath),
       'customers:exportExcel':         (p) => repository.exportCustomersToExcel(p?.filePath),
