@@ -269,6 +269,9 @@ function openDatabase() {
 
 function serializeProduct(row) {
   const stock = roundMoney(row.current_stock ?? row.stock_qty);
+  const isSplitKgProduct = normalizeUnit(row.unit) === 'kg' && roundMoney(row.sack_weight_kg) <= 0;
+  const currentCostBasis = roundMoney(row.current_cost_basis ?? row.cost);
+  const displayBaseCost = isSplitKgProduct ? roundMoney(row.cost) : currentCostBasis;
   let batches = [];
   try {
     if (row.active_batches) {
@@ -287,9 +290,11 @@ function serializeProduct(row) {
     unit: row.unit,
     catalogCost: roundMoney(row.cost),
     catalogSrp: roundMoney(row.srp),
-    cost: roundMoney(row.current_cost_basis ?? row.cost),
+    cost: displayBaseCost,
     oldestCostBasis: roundMoney(row.oldest_cost_basis ?? row.cost),
-    averageCost: calculateAverageCost(row.current_cost_basis ?? row.cost, row.labor_cost, row.packaging_cost),
+    averageCost: isSplitKgProduct
+      ? currentCostBasis
+      : calculateAverageCost(currentCostBasis, row.labor_cost, row.packaging_cost),
     srp: roundMoney(row.current_srp ?? row.srp),
     sackWeightKg: roundMoney(row.sack_weight_kg),
     pricePerKg: roundMoney(row.price_per_kg),
@@ -604,15 +609,15 @@ function createBatch(db, payload = {}) {
   return serializeBatch(db.prepare('SELECT * FROM batches WHERE id = ?').get(id));
 }
 
-function consumeStock(db, productId, qtyToConsume) {
+function consumeStock(db, productId, qtyToConsume, preferredBatchId = null) {
   const stamp = nowIso();
   let remainingToConsume = roundMoney(qtyToConsume);
   const consumed = [];
 
-  // 1. Try consuming from batches FIFO first
+  // 1. Try consuming from batches FIFO first (or preferred batch first if provided)
   const batches = db
-    .prepare('SELECT * FROM batches WHERE product_id = ? AND remaining_qty > 0 ORDER BY date ASC, created_at ASC')
-    .all(cleanString(productId));
+    .prepare('SELECT * FROM batches WHERE product_id = ? AND remaining_qty > 0 ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END ASC, date ASC, created_at ASC')
+    .all(cleanString(productId), cleanString(preferredBatchId));
 
   for (const batch of batches) {
     if (remainingToConsume <= 0) break;
@@ -974,7 +979,7 @@ function listProducts(db, { search = '', category = '' } = {}) {
       (SELECT b.unit_cost FROM batches b WHERE b.product_id = p.id AND b.remaining_qty > 0 ORDER BY b.date ASC, b.created_at ASC LIMIT 1) AS oldest_cost_basis,
       (SELECT b.unit_cost FROM batches b WHERE b.product_id = p.id AND b.remaining_qty > 0 ORDER BY b.date DESC, b.created_at DESC LIMIT 1) AS current_cost_basis,
       (SELECT b.remaining_qty FROM batches b WHERE b.product_id = p.id AND b.remaining_qty > 0 ORDER BY b.date ASC, b.created_at ASC LIMIT 1) AS oldest_batch_stock,
-      (SELECT json_group_array(json_object('remaining_qty', b.remaining_qty, 'srp', b.srp, 'unit_cost', b.unit_cost)) FROM batches b WHERE b.product_id = p.id AND b.remaining_qty > 0 ORDER BY b.date ASC, b.created_at ASC) AS active_batches
+      (SELECT json_group_array(json_object('id', b.id, 'batch_number', b.batch_number, 'date', b.date, 'remaining_qty', b.remaining_qty, 'srp', b.srp, 'unit_cost', b.unit_cost)) FROM batches b WHERE b.product_id = p.id AND b.remaining_qty > 0 ORDER BY b.date ASC, b.created_at ASC) AS active_batches
     FROM products p
   `;
 
@@ -1253,7 +1258,7 @@ function bulkDeleteProducts(db, ids) {
   return true;
 }
 
-function splitProduct(db, productId, quantity = 1, laborCost = 0, packagingCost = 0, srp = null) {
+function splitProduct(db, productId, quantity = 1, laborCost = 0, packagingCost = 0, srp = null, batchId = null) {
   const product = getProductById(db, productId);
   if (!product) {
     throw new Error('Product not found.');
@@ -1282,25 +1287,31 @@ function splitProduct(db, productId, quantity = 1, laborCost = 0, packagingCost 
   // Calculate SRP if not provided
   const retailSrp = srp !== null ? roundMoney(srp) : roundMoney(product.pricePerKg > 0 ? product.pricePerKg : (product.sackWeightKg > 0 ? product.srp / product.sackWeightKg : product.srp));
 
-  const tx = db.transaction(() => {
-    // 1. Deduct quantity from original product
-    consumeStock(db, product.id, qty);
-
-    // Record movement for the original product
-    db.prepare(`
-      INSERT INTO inventory_movements (
-        id, product_id, reference_type, reference_id, date, movement_type,
-        qty_in, qty_out, note, created_at
-      )
-      VALUES (?, ?, 'SPLIT', ?, ?, 'OUT', 0, ?, ?, ?)
-    `).run(createId(), product.id, product.id, todayIsoDate(), qty, `Split into retail kg`, stamp);
-
-    // 2. Find or create the kg product
-    let kgProduct = db.prepare('SELECT * FROM products WHERE code = ? OR name = ?').get(kgProductCode, kgProductName);
-
-    const addedStock = product.sackWeightKg * qty;
-    const sackBaseCost = roundMoney(product.catalogCost ?? product.cost);
-    const baseCostPerKg = product.sackWeightKg > 0 ? roundMoney(sackBaseCost / product.sackWeightKg) : sackBaseCost;
+    const tx = db.transaction(() => {
+      // 1. Deduct quantity from original product
+      consumeStock(db, product.id, qty, batchId);
+  
+      // Record movement for the original product
+      db.prepare(`
+        INSERT INTO inventory_movements (
+          id, product_id, reference_type, reference_id, date, movement_type,
+          qty_in, qty_out, note, created_at
+        )
+        VALUES (?, ?, 'SPLIT', ?, ?, 'OUT', 0, ?, ?, ?)
+      `).run(createId(), product.id, product.id, todayIsoDate(), qty, `Split into retail kg`, stamp);
+  
+      // 2. Find or create the kg product
+      let kgProduct = db.prepare('SELECT * FROM products WHERE code = ? OR name = ?').get(kgProductCode, kgProductName);
+  
+      const addedStock = product.sackWeightKg * qty;
+      let sackBaseCost = roundMoney(product.catalogCost ?? product.cost);
+      if (batchId) {
+        const selectedBatch = db.prepare('SELECT unit_cost FROM batches WHERE id = ?').get(batchId);
+        if (selectedBatch && selectedBatch.unit_cost) {
+          sackBaseCost = roundMoney(selectedBatch.unit_cost);
+        }
+      }
+      const baseCostPerKg = product.sackWeightKg > 0 ? roundMoney(sackBaseCost / product.sackWeightKg) : sackBaseCost;
     const splitFullCost = calculateAverageCost(baseCostPerKg, lCost, pCost);
 
     if (kgProduct) {
@@ -1336,6 +1347,7 @@ function splitProduct(db, productId, quantity = 1, laborCost = 0, packagingCost 
         productId: kgProduct.id,
         batchNumber: `SPLIT-${product.code}-${Date.now()}`,
         date: todayIsoDate(),
+        // Store split full unit cost for correct old/new averaging in sales.
         unitCost: splitFullCost,
         srp: retailSrp,
         remainingQty: addedStock,
@@ -1382,7 +1394,7 @@ function splitProduct(db, productId, quantity = 1, laborCost = 0, packagingCost 
         productId: newId,
         batchNumber: `SPLIT-INIT-${product.code}`,
         date: todayIsoDate(),
-        unitCost: baseCostPerKg,
+        unitCost: splitFullCost,
         srp: retailSrp,
         remainingQty: addedStock,
         unit: 'kg'
@@ -1410,7 +1422,7 @@ function getProductById(db, id) {
       (SELECT b.srp FROM batches b WHERE b.product_id = p.id AND b.remaining_qty > 0 ORDER BY b.date DESC, b.created_at DESC LIMIT 1) AS current_srp,
       (SELECT b.unit_cost FROM batches b WHERE b.product_id = p.id AND b.remaining_qty > 0 ORDER BY b.date DESC, b.created_at DESC LIMIT 1) AS current_cost_basis,
       (SELECT b.remaining_qty FROM batches b WHERE b.product_id = p.id AND b.remaining_qty > 0 ORDER BY b.date ASC, b.created_at ASC LIMIT 1) AS current_batch_stock,
-      (SELECT json_group_array(json_object('remaining_qty', b.remaining_qty, 'srp', b.srp, 'unit_cost', b.unit_cost)) FROM batches b WHERE b.product_id = p.id AND b.remaining_qty > 0 ORDER BY b.date ASC, b.created_at ASC) AS active_batches
+      (SELECT json_group_array(json_object('id', b.id, 'batch_number', b.batch_number, 'date', b.date, 'remaining_qty', b.remaining_qty, 'srp', b.srp, 'unit_cost', b.unit_cost)) FROM batches b WHERE b.product_id = p.id AND b.remaining_qty > 0 ORDER BY b.date ASC, b.created_at ASC) AS active_batches
     FROM products p WHERE p.id = ?
   `).get(cleanString(id));
   if (!row) return null;
@@ -2186,10 +2198,7 @@ function syncSaleShippingPurchase(db, {
     return null;
   }
 
-  const purchaseReceipt = cleanString(purchaseReceiptNumber);
-  if (!purchaseReceipt) {
-    throw new Error('Courier receipt number is required when shipping cost is entered.');
-  }
+  const purchaseReceipt = cleanString(purchaseReceiptNumber) || `SHP-${saleReceiptNumber || saleId.slice(0, 8)}`;
 
   const saleReceiptLabel = saleReceiptNumber ? String(saleReceiptNumber) : saleId.slice(0, 8);
   const siLabel = siNumber ? ` SI ${siNumber}` : '';
@@ -2242,9 +2251,7 @@ function createSale(db, payload = {}) {
     payload.shipping_purchase_receipt ?? payload.shippingPurchaseReceipt
   );
 
-  if (saleShippingCost > 0 && !shippingPurchaseReceipt) {
-    throw new Error('Courier receipt number is required when shipping cost is entered.');
-  }
+
 
   const insertSale = db.prepare(
     `
@@ -2392,7 +2399,7 @@ function createSale(db, payload = {}) {
           throw new Error(`STOCK_ERROR: Lack or out of stock for ${product.name}. Available: ${availableStock}.`);
         }
 
-        const consumed = consumeStock(db, product.id, pricing.stockQtyOut);
+        const consumed = consumeStock(db, product.id, pricing.stockQtyOut, rawItem.batch_id ?? null);
 
         if (consumed.length > 0) {
           const totalBatchCost = consumed.reduce((acc, c) => acc + (c.consumedQty * c.unitCost), 0);
@@ -2602,6 +2609,11 @@ function resolveSaleUnitCostFromBatchBasis(batchUnitCost, product, saleUnit) {
   const isKgSale = isKilogramUnit(saleUnit);
   const sackWeightKg = roundMoney(product.sack_weight_kg);
   let base = roundMoney(batchUnitCost);
+  const isSplitKgProduct = normalizeUnit(product.unit) === 'kg' && sackWeightKg <= 0;
+
+  if (isSplitKgProduct) {
+    return base;
+  }
 
   if (isKgSale && sackWeightKg > 0) {
     base = roundMoney(base / sackWeightKg);
@@ -2616,7 +2628,10 @@ function resolveSalePricing(product, rawItem, status) {
   const sackWeightKg = roundMoney(product.sack_weight_kg);
   const laborCost = roundMoney(product.labor_cost ?? product.laborCost);
   const packagingCost = roundMoney(product.packaging_cost ?? product.packagingCost);
-  const sackCost = calculateAverageCost(product.oldestCostBasis ?? product.cost, laborCost, packagingCost);
+  const isSplitKgProduct = normalizeUnit(product.unit) === 'kg' && sackWeightKg <= 0;
+  const sackCost = isSplitKgProduct
+    ? roundMoney(product.oldestCostBasis ?? product.cost)
+    : calculateAverageCost(product.oldestCostBasis ?? product.cost, laborCost, packagingCost);
   const baseSrp = roundMoney(product.current_srp ?? product.srp);
   const derivedKgPrice = sackWeightKg > 0 ? roundMoney(baseSrp / sackWeightKg) : 0;
   const pricePerKg = roundMoney(product.price_per_kg || derivedKgPrice);
@@ -4442,8 +4457,8 @@ export function createRepository() {
     getProductStock(productId) {
       return getProductStock(db, productId);
     },
-    splitProduct(productId, quantity, laborCost, packagingCost, srp) {
-      return splitProduct(db, productId, quantity, laborCost, packagingCost, srp);
+    splitProduct(productId, quantity, laborCost, packagingCost, srp, batchId) {
+      return splitProduct(db, productId, quantity, laborCost, packagingCost, srp, batchId);
     },
     restockProduct(payload) {
       return restockProduct(db, payload);

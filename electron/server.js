@@ -68,7 +68,7 @@ export function createSyncServer(repository, photosDir, uiDir) {
       'products:delete':     (p) => repository.deleteProduct(p),
       'products:bulkDelete': (p) => repository.bulkDeleteProducts(p),
       'products:getStock':   (p) => repository.getProductStock(p),
-      'products:split':      (p) => repository.splitProduct(p.productId, p.quantity, p.laborCost, p.packagingCost, p.srp),
+      'products:split':      (p) => repository.splitProduct(p.productId, p.quantity, p.laborCost, p.packagingCost, p.srp, p.batchId),
       'products:uploadPhotoFile': (p) => {
         const buffer = p.isBase64 ? Buffer.from(p.fileData, 'base64') : p.fileData;
         return repository.uploadPhotoFile(p.fileName, buffer);

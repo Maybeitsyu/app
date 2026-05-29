@@ -788,7 +788,8 @@ function blankProductForm() {
         is_vat_exempt: false,
         reorder_point: '10',
         photo_path: '',
-        is_hidden: false
+        is_hidden: false,
+        batches: []
     };
 }
 
@@ -988,7 +989,8 @@ function productToForm(product) {
         is_vat_exempt: Boolean(product.isVatExempt),
         reorder_point: String(product.reorderPoint ?? 10),
         photo_path: product.photoPath ?? '',
-        is_hidden: Boolean(product.isHidden)
+        is_hidden: Boolean(product.isHidden),
+        batches: product.batches ?? []
     };
 }
 
@@ -1013,7 +1015,7 @@ function getProductSaleUnitOptions(product) {
     return Array.from(new Set(units.filter(Boolean)));
 }
 
-function getProductUnitPrice(product, unit, qty = 1) {
+function getProductUnitPrice(product, unit, qty = 1, preferredBatchId = null) {
     if (!product) {
         return 0;
     }
@@ -1022,9 +1024,17 @@ function getProductUnitPrice(product, unit, qty = 1) {
     let requestedStockOut = isKgSale && (product.sackWeightKg ?? 0) > 0 ? qty / product.sackWeightKg : qty;
 
     if (product.batches && product.batches.length > 0 && requestedStockOut > 0) {
+        let batchesToConsume = [...product.batches];
+        if (preferredBatchId) {
+            batchesToConsume.sort((a, b) => {
+                if (String(a.id) === String(preferredBatchId) && String(b.id) !== String(preferredBatchId)) return -1;
+                if (String(b.id) === String(preferredBatchId) && String(a.id) !== String(preferredBatchId)) return 1;
+                return 0;
+            });
+        }
         let totalSrp = 0;
         let remainingToFulfill = requestedStockOut;
-        for (const batch of product.batches) {
+        for (const batch of batchesToConsume) {
             const batchQty = toNumber(batch.remaining_qty || batch.remainingQty);
             const batchSrp = toNumber(batch.srp);
             if (batchQty > 0) {
@@ -1062,6 +1072,11 @@ function resolveSaleUnitCostFromBase(baseUnitCost, product, unit) {
     const laborCost = toNumber(product.laborCost ?? product.labor_cost, 0);
     const packagingCost = toNumber(product.packagingCost ?? product.packaging_cost, 0);
     let base = toNumber(baseUnitCost, 0);
+    const isSplitKgProduct = normalizeUnit(product?.unit) === 'kg' && toNumber(product?.sackWeightKg ?? product?.sack_weight_kg, 0) <= 0;
+
+    if (isSplitKgProduct) {
+        return base;
+    }
 
     if (isKilogramUnit(unit) && (product.sackWeightKg ?? 0) > 0) {
         base = base / product.sackWeightKg;
@@ -1084,7 +1099,7 @@ function productHasOldStock(product) {
     return activeBatchCount > 1 && oldestQty > 0 && oldestQty < totalStock;
 }
 
-function getProductUnitCost(product, unit, qty = 1) {
+function getProductUnitCost(product, unit, qty = 1, preferredBatchId = null) {
     if (!product) {
         return 0;
     }
@@ -1093,9 +1108,17 @@ function getProductUnitCost(product, unit, qty = 1) {
     let requestedStockOut = isKgSale && (product.sackWeightKg ?? 0) > 0 ? qty / product.sackWeightKg : qty;
 
     if (product.batches && product.batches.length > 0 && requestedStockOut > 0) {
+        let batchesToConsume = [...product.batches];
+        if (preferredBatchId) {
+            batchesToConsume.sort((a, b) => {
+                if (String(a.id) === String(preferredBatchId) && String(b.id) !== String(preferredBatchId)) return -1;
+                if (String(b.id) === String(preferredBatchId) && String(a.id) !== String(preferredBatchId)) return 1;
+                return 0;
+            });
+        }
         let totalCost = 0;
         let remainingToFulfill = requestedStockOut;
-        for (const batch of product.batches) {
+        for (const batch of batchesToConsume) {
             const batchQty = toNumber(batch.remaining_qty || batch.remainingQty);
             const batchCost = toNumber(batch.unit_cost || batch.unitCost);
             if (batchQty > 0) {
@@ -1262,8 +1285,8 @@ function summarizeSalePreview(items, products, status, vatRate = defaultTaxSetti
 
         const lineUnit = item.unit || product.unit || 'pc';
         const qty = status === 'FAILED' ? 0 : toNumber(item.qty, 1);
-        const unitPrice = status === 'FAILED' ? 0 : toNumber(item.unit_price, getProductUnitPrice(product, lineUnit, qty));
-        const unitCost = toNumber(item.unit_cost, getProductUnitCost(product, lineUnit, qty));
+        const unitPrice = status === 'FAILED' ? 0 : toNumber(item.unit_price, getProductUnitPrice(product, lineUnit, qty, item.batch_id));
+        const unitCost = toNumber(item.unit_cost, getProductUnitCost(product, lineUnit, qty, item.batch_id));
         const line = calculateSaleLine({
             qty,
             unitPrice,
@@ -2208,59 +2231,60 @@ function ProductsTab({
                                     </div>
                                     <div className="product-card-meta" style={{ marginTop: '4px', fontSize: '0.8rem', color: '#666' }}>
                                         <span>Cost: {formatCurrency(product.averageCost)}</span>
+                                        {activeProductId === product.id && (
+                                            <>
+                                                <div className="product-card-overlay-actions" style={{ marginTop: '12px', flexDirection: 'row', maxWidth: 'none', flexWrap: 'wrap' }} onClick={(e) => e.stopPropagation()}>
+                                                    <button
+                                                        className="btn-card-split"
+                                                        type="button"
+                                                        style={{ background: 'rgba(52, 152, 219, 0.1)', color: '#2980b9', borderColor: 'rgba(52, 152, 219, 0.2)' }}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            onReorderProduct(product);
+                                                            setActiveProductId(null);
+                                                        }}
+                                                    >
+                                                        Reorder
+                                                    </button>
+                                                    {product.sackWeightKg > 0 && (
+                                                        <button
+                                                            className="btn-card-split"
+                                                            type="button"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                onSplit(product);
+                                                                setActiveProductId(null);
+                                                            }}
+                                                        >
+                                                            Split
+                                                        </button>
+                                                    )}
+                                                    <button
+                                                        className="btn-card-edit"
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            onEdit(product);
+                                                            setActiveProductId(null);
+                                                        }}
+                                                    >
+                                                        Edit
+                                                    </button>
+                                                    <button
+                                                        className="btn-card-delete"
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            onDelete(product.id);
+                                                            setActiveProductId(null);
+                                                        }}
+                                                    >
+                                                        Del
+                                                    </button>
+                                                </div>
+                                            </>
+                                        )}
                                     </div>
-                                    {activeProductId === product.id && (
-                                        <div className="product-card-overlay-actions" style={{ marginTop: '12px', flexDirection: 'row', maxWidth: 'none', flexWrap: 'wrap' }} onClick={(e) => e.stopPropagation()}>
-                                            <button
-
-                                                className="btn-card-split"
-                                                type="button"
-                                                style={{ background: 'rgba(52, 152, 219, 0.1)', color: '#2980b9', borderColor: 'rgba(52, 152, 219, 0.2)' }}
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    onReorderProduct(product);
-                                                    setActiveProductId(null);
-                                                }}
-                                            >
-                                                Reorder
-                                            </button>
-                                            {product.sackWeightKg > 0 && (
-                                                <button
-                                                    className="btn-card-split"
-                                                    type="button"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        onSplit(product);
-                                                        setActiveProductId(null);
-                                                    }}
-                                                >
-                                                    Split
-                                                </button>
-                                            )}
-                                            <button
-                                                className="btn-card-edit"
-                                                type="button"
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    onEdit(product);
-                                                    setActiveProductId(null);
-                                                }}
-                                            >
-                                                Edit
-                                            </button>
-                                            <button
-                                                className="btn-card-delete"
-                                                type="button"
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    onDelete(product.id);
-                                                    setActiveProductId(null);
-                                                }}
-                                            >
-                                                Del
-                                            </button>
-                                        </div>
-                                    )}
                                 </div>
                             </article>
                         ))}
@@ -2935,7 +2959,6 @@ function SalesTab({
         toNumber(form.shipping_cost, 0) > 0
         && !String(form.shipping_purchase_receipt ?? '').trim()
     ) {
-        saveBlockerMessage = 'Courier receipt number is required when shipping cost is entered.';
     } else if (validItems.length === 0) {
         saveBlockerMessage = 'Add at least one product line before saving.';
     } else if (preview.lines.some(l => l.qty <= 0 && form.status !== 'FAILED')) {
@@ -3199,8 +3222,8 @@ function SalesTab({
                                                     Item #{index + 1}
                                                 </div>
                                                 <div className="sale-line-fields">
-                                                    <div className="sale-line-row sale-line-row-main">
-                                                        <div className="field sale-line-product">
+                                                    <div className="sale-line-row sale-line-row-main" style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
+                                                        <div className="field sale-line-product" style={{ flex: '1 1 220px', gridColumn: 'unset' }}>
                                                             <span>Product <span style={{ color: 'var(--danger)' }}>*</span></span>
                                                             <div className="stack-h" style={{ gap: '6px', alignItems: 'stretch' }}>
                                                                 <div style={{ flex: 1 }}>
@@ -3222,7 +3245,7 @@ function SalesTab({
                                                                 </button>
                                                             </div>
                                                         </div>
-                                                        <label className="field sale-line-qty">
+                                                        <label className="field sale-line-qty" style={{ flex: '0 0 100px', gridColumn: 'unset' }}>
                                                             <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                                                                 <span>Qty <span style={{ color: 'var(--danger)' }}>*</span></span>
                                                                 {preview.lines[index]?.isOverStock && (
@@ -3239,7 +3262,7 @@ function SalesTab({
                                                                 onChange={(event) => updateLine(index, { qty: event.target.value, gross_override: null })}
                                                             />
                                                         </label>
-                                                        <label className="field sale-line-unit">
+                                                        <label className="field sale-line-unit" style={{ flex: '0 0 100px', gridColumn: 'unset' }}>
                                                             <span>Unit</span>
                                                             <select
                                                                 className="select"
@@ -3252,7 +3275,43 @@ function SalesTab({
                                                                 ))}
                                                             </select>
                                                         </label>
-                                                        <div className="sale-line-remove">
+                                                        {(() => {
+                                                            const p = products.find(p => p.id === item.product_id);
+                                                            const batches = p && Array.isArray(p.batches) ? p.batches.filter(b => (b.remaining_qty ?? b.remainingQty) > 0) : [];
+                                                            if (batches.length <= 1) return null;
+                                                            return (
+                                                                <label className="field sale-line-batch" style={{ flex: '0 0 150px', gridColumn: 'unset' }}>
+                                                                    <span>Stock Price</span>
+                                                                    <select
+                                                                        className="select"
+                                                                        value={item.batch_id || ''}
+                                                                        onChange={(event) => {
+                                                                            const newBatchId = event.target.value;
+                                                                            const pInfo = products.find(p => p.id === item.product_id);
+                                                                            if (pInfo) {
+                                                                                const newUnitPrice = getProductUnitPrice(pInfo, item.unit, item.qty, newBatchId);
+                                                                                const newUnitCost = getProductUnitCost(pInfo, item.unit, item.qty, newBatchId);
+                                                                                updateLine(index, { 
+                                                                                    batch_id: newBatchId,
+                                                                                    unit_price: String(newUnitPrice),
+                                                                                    unit_cost: String(newUnitCost)
+                                                                                });
+                                                                            } else {
+                                                                                updateLine(index, { batch_id: newBatchId });
+                                                                            }
+                                                                        }}
+                                                                    >
+                                                                        <option value="">Auto (Oldest First)</option>
+                                                                        {batches.map((b, i, arr) => (
+                                                                            <option key={b.id} value={b.id}>
+                                                                                {i === 0 ? 'Old Stock' : i === arr.length - 1 ? 'New Stock' : `Stock`} (Price: {formatCurrency(b.srp)}) - {b.remaining_qty ?? b.remainingQty} left
+                                                                            </option>
+                                                                        ))}
+                                                                    </select>
+                                                                </label>
+                                                            );
+                                                        })()}
+                                                        <div className="sale-line-remove" style={{ flex: '0 0 auto', gridColumn: 'unset', display: 'flex', alignItems: 'flex-end', paddingBottom: '2px', marginLeft: 'auto' }}>
                                                             <button className="button ghost" type="button" onClick={() => removeLine(index)}>
                                                                 Remove
                                                             </button>
@@ -3420,10 +3479,7 @@ function SalesTab({
                                         <div className="sale-shipping-fields">
                                             <label className="field">
                                                 <span>
-                                                    Receipt number (courier OR)
-                                                    {toNumber(form.shipping_cost, 0) > 0 ? (
-                                                        <span style={{ color: 'var(--danger)' }}> *</span>
-                                                    ) : null}
+                                                    Receipt number (courier OR) <span style={{ color: 'var(--muted)', fontWeight: 400, fontSize: '0.85em' }}>(optional)</span>
                                                 </span>
                                                 <input
                                                     className="input"
@@ -6199,11 +6255,123 @@ function RestockProductDialog({ product, isOpen, onConfirm, onCancel }) {
     );
 }
 
+
+function StockPriceBreakdown({ product }) {
+    if (!product || !Array.isArray(product.batches) || product.batches.length === 0) {
+        return (
+            <div style={{ padding: '12px', background: 'rgba(0,0,0,0.02)', borderRadius: '12px', border: '1px solid var(--border)', fontSize: '0.9rem', color: 'var(--muted)', textAlign: 'center' }}>
+                No active stock batches found. All stock is currently empty or unbatched.
+            </div>
+        );
+    }
+
+    const activeBatches = product.batches.filter(b => toNumber(b.remaining_qty ?? b.remainingQty, 0) > 0);
+    if (activeBatches.length === 0) {
+        return (
+            <div style={{ padding: '12px', background: 'rgba(0,0,0,0.02)', borderRadius: '12px', border: '1px solid var(--border)', fontSize: '0.9rem', color: 'var(--muted)', textAlign: 'center' }}>
+                No active stock batches on hand.
+            </div>
+        );
+    }
+
+    const oldest = activeBatches[0];
+    const newest = activeBatches[activeBatches.length - 1];
+
+    const oldestCost = toNumber(oldest.unit_cost ?? oldest.unitCost, 0);
+    const newestCost = toNumber(newest.unit_cost ?? newest.unitCost, 0);
+    const oldestSrp = toNumber(oldest.srp, 0);
+    const newestSrp = toNumber(newest.srp, 0);
+
+    const costDiff = newestCost - oldestCost;
+    const costDiffPct = oldestCost > 0 ? (costDiff / oldestCost) * 100 : 0;
+    const srpDiff = newestSrp - oldestSrp;
+    const srpDiffPct = oldestSrp > 0 ? (srpDiff / oldestSrp) * 100 : 0;
+
+    const formatDiff = (diff, pct) => {
+        if (diff === 0) return <span style={{ color: 'var(--muted)', fontSize: '0.8rem' }}>No change</span>;
+        const color = diff > 0 ? 'var(--success)' : 'var(--danger)';
+        const sign = diff > 0 ? '▲ +' : '▼ ';
+        return (
+            <span style={{ color, fontSize: '0.8rem', fontWeight: 600 }}>
+                {sign}{formatCurrency(Math.abs(diff))} ({pct > 0 ? '+' : ''}{pct.toFixed(1)}%)
+            </span>
+        );
+    };
+
+    return (
+        <div className="stack" style={{ gap: '12px', marginTop: '14px', borderTop: '1px solid var(--border)', paddingTop: '14px', width: '100%' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <strong style={{ fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--muted)' }}>Stock Price Comparison</strong>
+                <span className="pill tone-neutral" style={{ fontSize: '0.75rem', fontWeight: 600 }}>{activeBatches.length} {activeBatches.length === 1 ? 'Batch' : 'Batches'}</span>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div style={{ padding: '12px', background: 'rgba(255,255,255,0.5)', borderRadius: '12px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase' }}>Stock Unit Cost (Old vs New)</span>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '1.05rem', fontWeight: 700 }}>{formatCurrency(newestCost)}</span>
+                        {activeBatches.length > 1 && (
+                            <span style={{ fontSize: '0.85rem', color: 'var(--muted)', textDecoration: 'line-through' }}>{formatCurrency(oldestCost)}</span>
+                        )}
+                    </div>
+                    {activeBatches.length > 1 && <div>{formatDiff(costDiff, costDiffPct)}</div>}
+                </div>
+
+                <div style={{ padding: '12px', background: 'rgba(255,255,255,0.5)', borderRadius: '12px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase' }}>Stock SRP (Old vs New)</span>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '1.05rem', fontWeight: 700 }}>{formatCurrency(newestSrp)}</span>
+                        {activeBatches.length > 1 && (
+                            <span style={{ fontSize: '0.85rem', color: 'var(--muted)', textDecoration: 'line-through' }}>{formatCurrency(oldestSrp)}</span>
+                        )}
+                    </div>
+                    {activeBatches.length > 1 && <div>{formatDiff(srpDiff, srpDiffPct)}</div>}
+                </div>
+            </div>
+
+            <div style={{ maxHeight: '180px', overflowY: 'auto', border: '1px solid var(--border)', borderRadius: '12px', background: '#fff' }}>
+                <table className="table" style={{ margin: 0, fontSize: '0.8rem', width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                        <tr style={{ background: 'rgba(0,0,0,0.02)', borderBottom: '1px solid var(--border)', textAlign: 'left' }}>
+                            <th style={{ padding: '6px 10px', fontWeight: 600 }}>Date / Batch #</th>
+                            <th style={{ padding: '6px 10px', fontWeight: 600, textAlign: 'right' }}>Qty</th>
+                            <th style={{ padding: '6px 10px', fontWeight: 600, textAlign: 'right' }}>Cost</th>
+                            <th style={{ padding: '6px 10px', fontWeight: 600, textAlign: 'right' }}>SRP</th>
+                            <th style={{ padding: '6px 10px', fontWeight: 600, textAlign: 'right' }}>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {activeBatches.map((batch, idx) => {
+                            const qty = toNumber(batch.remaining_qty ?? batch.remainingQty, 0);
+                            const cost = toNumber(batch.unit_cost ?? batch.unitCost, 0);
+                            const srp = toNumber(batch.srp, 0);
+                            const value = qty * cost;
+                            return (
+                                <tr key={batch.batch_number ?? batch.batchNumber ?? idx} style={{ borderBottom: idx === activeBatches.length - 1 ? 'none' : '1px solid var(--border)' }}>
+                                    <td style={{ padding: '6px 10px' }}>
+                                        <div style={{ fontWeight: 600 }}>{batch.date ? formatDateShort(batch.date) : 'Legacy'}</div>
+                                        <div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>{batch.batch_number ?? batch.batchNumber ?? '-'}</div>
+                                    </td>
+                                    <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 600 }}>{formatQuantity(qty)}</td>
+                                    <td style={{ padding: '6px 10px', textAlign: 'right' }}>{formatCurrency(cost)}</td>
+                                    <td style={{ padding: '6px 10px', textAlign: 'right' }}>{formatCurrency(srp)}</td>
+                                    <td style={{ padding: '6px 10px', textAlign: 'right', fontWeight: 600, color: 'var(--primary)' }}>{formatCurrency(value)}</td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+}
+
 function SplitProductDialog({ product, isOpen, onConfirm, onCancel }) {
     const [quantity, setQuantity] = useState(1);
     const [laborCost, setLaborCost] = useState('0');
     const [packagingCost, setPackagingCost] = useState('0');
     const [srp, setSrp] = useState('0');
+    const [batchId, setBatchId] = useState('');
     const inputRef = useRef(null);
 
     useEffect(() => {
@@ -6217,6 +6385,8 @@ function SplitProductDialog({ product, isOpen, onConfirm, onCancel }) {
                 : (product.sackWeightKg > 0 ? (product.srp / product.sackWeightKg) : 0);
 
             setSrp(String(initialSrp));
+            const availableBatches = (product.batches || []).filter(b => (b.remaining_qty ?? b.remainingQty) > 0);
+            setBatchId(availableBatches.length > 0 ? availableBatches[0].id : '');
             setTimeout(() => inputRef.current?.focus(), 50);
         }
     }, [isOpen, product]);
@@ -6231,8 +6401,10 @@ function SplitProductDialog({ product, isOpen, onConfirm, onCancel }) {
 
     function handleSubmit(e) {
         e.preventDefault();
-        if (isValid) onConfirm(qty, lCost, pCost, parseFloat(srp) || 0);
+        if (isValid) onConfirm(qty, lCost, pCost, parseFloat(srp) || 0, batchId || null);
     }
+
+    const activeBatches = (product.batches || []).filter(b => (b.remaining_qty ?? b.remainingQty) > 0);
 
     return (
         <div className="confirm-overlay">
@@ -6258,6 +6430,23 @@ function SplitProductDialog({ product, isOpen, onConfirm, onCancel }) {
                             onChange={(e) => setQuantity(e.target.value)}
                         />
                     </label>
+
+                    {activeBatches.length > 1 && (
+                        <label className="field" style={{ marginBottom: '12px' }}>
+                            <span style={{ fontWeight: 600 }}>Stock to Split</span>
+                            <select
+                                className="select"
+                                value={batchId}
+                                onChange={(e) => setBatchId(e.target.value)}
+                            >
+                                {activeBatches.map((b, i, arr) => (
+                                    <option key={b.id} value={b.id}>
+                                        {i === 0 ? 'Old Stock' : i === arr.length - 1 ? 'New Stock' : `Stock`} (Price: {new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(b.srp)}) - {b.remaining_qty ?? b.remainingQty} left
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    )}
 
                     <div className="field-grid">
                         <label className="field">
@@ -6295,6 +6484,80 @@ function SplitProductDialog({ product, isOpen, onConfirm, onCancel }) {
                             → Will add <strong>{addedKg} kg</strong> to retail inventory
                         </p>
                     )}
+                    {qty > 0 && product.sackWeightKg > 0 && (() => {
+                        // Use selected batch cost if one is picked, otherwise fall back to product's average/catalog cost
+                        const selectedBatch = batchId ? activeBatches.find(b => String(b.id) === String(batchId)) : null;
+                        const sackBaseCost = selectedBatch
+                            ? toNumber(selectedBatch.unit_cost ?? selectedBatch.unitCost, 0)
+                            : (parseFloat(product.catalogCost ?? product.cost) || 0);
+                        const baseCostPerKg = product.sackWeightKg > 0 ? (sackBaseCost / product.sackWeightKg) : sackBaseCost;
+                        const oldStockLabel = selectedBatch
+                            ? (activeBatches.indexOf(selectedBatch) === 0 ? 'Old Stock' : activeBatches.indexOf(selectedBatch) === activeBatches.length - 1 ? 'New Stock' : 'Selected Stock')
+                            : 'Old Stock';
+                        return (
+                            <div style={{
+                                marginTop: '16px',
+                                marginBottom: '16px',
+                                padding: '14px',
+                                background: 'rgba(15, 118, 110, 0.04)',
+                                borderRadius: '16px',
+                                border: '1px solid rgba(15, 118, 110, 0.12)',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '10px'
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <strong style={{ fontSize: '0.88rem', color: 'var(--primary-strong)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                        Split Cost Calculation
+                                    </strong>
+                                </div>
+
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                        <span style={{ fontSize: '0.75rem', color: 'var(--muted)', fontWeight: 700 }}>
+                                            Product Unit Cost ({product.unit})
+                                        </span>
+                                        <strong style={{ fontSize: '1.15rem', color: 'var(--text)' }}>
+                                            {formatCurrency(sackBaseCost)}
+                                        </strong>
+                                        <span style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>
+                                            Sack weight: {product.sackWeightKg} kg
+                                        </span>
+                                    </div>
+
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                        <span style={{ fontSize: '0.75rem', color: 'var(--muted)', fontWeight: 700 }}>
+                                            Retail Unit Cost (kg)
+                                        </span>
+                                        <strong style={{ fontSize: '1.15rem', color: 'var(--success)' }}>
+                                            {formatCurrency(baseCostPerKg + lCost + pCost)}
+                                        </strong>
+                                        <span style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>
+                                            Base Cost: {formatCurrency(baseCostPerKg)} / kg
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <div style={{
+                                    fontSize: '0.75rem',
+                                    color: 'var(--muted)',
+                                    borderTop: '1px dashed var(--border)',
+                                    paddingTop: '8px',
+                                    display: 'flex',
+                                    flexWrap: 'wrap',
+                                    justifyContent: 'space-between',
+                                    gap: '8px'
+                                }}>
+                                    <span>
+                                        <strong>Calculation:</strong> {formatCurrency(baseCostPerKg)} (Base) + {formatCurrency(lCost)} (Labor) + {formatCurrency(pCost)} (Pkg)
+                                    </span>
+                                    <span>
+                                        <strong>SRP:</strong> {formatCurrency(parseFloat(srp) || 0)} / kg
+                                    </span>
+                                </div>
+                            </div>
+                        );
+                    })()}
                     {qty > (product.stockQty ?? 0) && (
                         <p style={{ marginBottom: '8px', fontSize: '0.88rem', color: '#c0392b' }}>
                             ⚠ Exceeds available stock ({product.stockQty} {product.unit})
@@ -7109,7 +7372,7 @@ export default function App() {
         setSplitDialog({ isOpen: false, product: null });
     }
 
-    async function handleConfirmSplit(qty, laborCost, packagingCost, srp) {
+    async function handleConfirmSplit(qty, laborCost, packagingCost, srp, batchId) {
         const product = splitDialog.product;
         closeSplitDialog();
         try {
@@ -7118,7 +7381,8 @@ export default function App() {
                 quantity: qty,
                 laborCost,
                 packagingCost,
-                srp
+                srp,
+                batchId
             });
             flash(`Split ${qty} ${product.unit} â†’ ${(qty * product.sackWeightKg).toFixed(2)} kg added to inventory.`, 'success');
             await loadWorkspace();
@@ -7685,13 +7949,6 @@ export default function App() {
             return;
         }
 
-        if (
-            toNumber(saleForm.shipping_cost, 0) > 0
-            && !String(saleForm.shipping_purchase_receipt ?? '').trim()
-        ) {
-            flash('Courier receipt number is required when shipping cost is entered.', 'danger');
-            return;
-        }
 
         const originalSale = saleForm.id ? sales.find(s => s.id === saleForm.id) : null;
         const salePreview = summarizeSalePreview(
@@ -7740,7 +7997,8 @@ export default function App() {
                     unit_cost: item.unit_cost,
                     gross_override: item.gross_override,
                     unit: (item.unit || '').trim(),
-                    is_vat_exempt: item.is_vat_exempt
+                    is_vat_exempt: item.is_vat_exempt,
+                    batch_id: item.batch_id
                 }))
             };
 
@@ -8958,6 +9216,11 @@ export default function App() {
                                     <span>Hide from catalog & search</span>
                                 </label>
                             </div>
+                            {productForm.id && (
+                                <div style={{ marginTop: '16px', marginBottom: '8px' }}>
+                                    <StockPriceBreakdown product={productForm} />
+                                </div>
+                            )}
                             <div className="form-actions">
                                 <button className="button primary" type="submit">
                                     {productForm.id ? 'Update product' : 'Save product'}

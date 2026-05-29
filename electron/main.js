@@ -110,8 +110,8 @@ function registerIpcHandlers() {
     syncServer?.broadcastChange('products:bulkDelete');
     return res;
   });
-  ipcMain.handle('products:split', (_, { productId, quantity, laborCost, packagingCost, srp }) => {
-    const res = repository.splitProduct(productId, quantity, laborCost, packagingCost, srp);
+  ipcMain.handle('products:split', (_, { productId, quantity, laborCost, packagingCost, srp, batchId }) => {
+    const res = repository.splitProduct(productId, quantity, laborCost, packagingCost, srp, batchId);
     syncServer?.broadcastChange('products:split');
     return res;
   });
