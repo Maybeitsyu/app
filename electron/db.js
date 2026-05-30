@@ -549,10 +549,38 @@ function migrateLegacyProductStockToBatches(db, productId, { unitCost = 0, srp =
     unit: cleanString(unit) || 'pc'
   });
 
+  // Zero out the legacy stock quantity so it isn't counted twice!
+  db.prepare('UPDATE products SET stock_qty = 0, updated_at = ? WHERE id = ?').run(nowIso(), pid);
+
   return legacyQty;
 }
 
 function migrateAllLegacyProductStock(db) {
+  // 1. Clean up duplicate legacy batches (keep only the oldest one per product)
+  db.prepare(`
+    DELETE FROM batches
+    WHERE batch_number LIKE 'LEGACY-%'
+      AND rowid NOT IN (
+        SELECT MIN(rowid)
+        FROM batches
+        WHERE batch_number LIKE 'LEGACY-%'
+        GROUP BY product_id
+      )
+  `).run();
+
+  // 2. Zero out products.stock_qty for products that already have a legacy batch to prevent duplicate migration
+  db.prepare(`
+    UPDATE products
+    SET stock_qty = 0, updated_at = ?
+    WHERE stock_qty > 0
+      AND id IN (
+        SELECT DISTINCT product_id
+        FROM batches
+        WHERE batch_number LIKE 'LEGACY-%'
+      )
+  `).run(nowIso());
+
+  // 3. Migrate any remaining products where stock_qty > 0 (that haven't been migrated yet)
   const rows = db
     .prepare('SELECT id, stock_qty, cost, srp, unit FROM products WHERE stock_qty > 0')
     .all();
