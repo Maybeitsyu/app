@@ -3197,7 +3197,7 @@ async function exportFullReportToExcel(db, filePath, filters = {}) {
       });
 
       for (const row of writtenRows) {
-        totalSales += (row.net_of_vat + row.vat_exempt);
+        totalSales += (row.gross || 0);
         totalCost += row.total_cost;
         totalProfit += row.profit;
       }

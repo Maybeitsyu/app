@@ -277,7 +277,7 @@ export function calculateSaleLine({
       vatExemptAmount: lineExempt ? grossAmount : 0,
       costing: safeUnitCost,
       totalCost,
-      profit: roundMoney(grossAmount - vatSplit.vatAmount - costVatSplit.netOfVat - shippingCostVatSplit.netOfVat)
+      profit: roundMoney(grossAmount - totalCost)
     };
   }
 
@@ -325,7 +325,7 @@ export function calculateSaleLine({
     vatExemptAmount,
     costing: safeUnitCost,
     totalCost,
-    profit: roundMoney(grossAmount - outputVat - costVatSplit.netOfVat - shippingCostVatSplit.netOfVat)
+    profit: roundMoney(grossAmount - totalCost)
   };
 }
 

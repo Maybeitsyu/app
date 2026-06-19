@@ -416,4 +416,25 @@ export function initializeSchema(db) {
   } catch (error) {
     // Column might already exist, ignore
   }
+
+  // MIGRATION: Recalculate profit using the new simple formula (profit = gross - total_cost)
+  try {
+    // 1. Update sale items
+    db.exec(`
+      UPDATE sale_items 
+      SET profit = ROUND(gross_amount - total_cost, 2)
+    `);
+
+    // 2. Update sales
+    db.exec(`
+      UPDATE sales
+      SET profit = ROUND(
+        COALESCE((SELECT SUM(profit) FROM sale_items WHERE sale_id = sales.id), 0) +
+        (shipping_fee - shipping_cost),
+        2
+      )
+    `);
+  } catch (error) {
+    console.error('Failed to recalculate profit migration:', error);
+  }
 }
