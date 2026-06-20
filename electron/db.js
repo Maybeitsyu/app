@@ -778,8 +778,8 @@ function getDashboardSummary(db, { fromDate = '', toDate = '' } = {}) {
     .prepare(
       `
         SELECT
-          COALESCE(SUM(CASE WHEN date = ? AND status NOT IN ('FAILED', 'Return') THEN COALESCE(NULLIF(net_of_vat, 0), input_vat) + vat_exempt_amount ELSE 0 END), 0) AS sales_today,
-          COALESCE(SUM(CASE WHEN date >= ? AND date <= ? AND status NOT IN ('FAILED', 'Return') THEN COALESCE(NULLIF(net_of_vat, 0), input_vat) + vat_exempt_amount ELSE 0 END), 0) AS sales_period,
+          COALESCE(SUM(CASE WHEN date = ? AND status NOT IN ('FAILED', 'Return') THEN gross_amount ELSE 0 END), 0) AS sales_today,
+          COALESCE(SUM(CASE WHEN date >= ? AND date <= ? AND status NOT IN ('FAILED', 'Return') THEN gross_amount ELSE 0 END), 0) AS sales_period,
           COALESCE(SUM(CASE WHEN date >= ? AND date <= ? AND status NOT IN ('FAILED', 'Return') THEN profit ELSE 0 END), 0) AS profit_period,
           COALESCE(SUM(CASE WHEN date >= ? AND date <= ? AND status NOT IN ('FAILED', 'Return') THEN output_vat ELSE 0 END), 0) AS output_vat_period,
           COALESCE(SUM(CASE WHEN date >= ? AND date <= ? AND status NOT IN ('FAILED', 'Return') THEN vat_exempt_amount ELSE 0 END), 0) AS vat_exempt_sales,
